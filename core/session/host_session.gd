@@ -6,6 +6,7 @@ extends RefCounted
 ##
 ## Hooks (set before start):
 ##   admission_policy(player_name) -> Result   veto a join (room full, name taken...).
+##   rejoin_policy(player_id) -> Result         veto a rejoin (player left, room full...).
 ##   welcome_extra(player_id) -> Dictionary    extra data for that player's welcome.
 ##
 ## Options (all optional): max_pending_handshakes, handshake_timeout_msec,
@@ -22,6 +23,7 @@ var registry: PlayerRegistry = PlayerRegistry.new()
 ## Milliseconds clock. Tests replace it to move time without waiting.
 var clock: Callable = func() -> int: return Time.get_ticks_msec()
 var admission_policy: Callable = Callable()
+var rejoin_policy: Callable = Callable()
 var welcome_extra: Callable = Callable()
 
 var _app_version: String
@@ -189,6 +191,9 @@ func _on_message(peer_id: int, message: Dictionary) -> void:
 	elif _players.has(peer_id):
 		var entry: Dictionary = _players[peer_id]
 		entry["last_heard"] = now
+		if entry["unconfirmed"]:
+			entry["unconfirmed"] = false
+			registry.confirm_token(registry.player_of_peer(peer_id))
 		if not (entry["limiter"] as RateLimiter).allow(now):
 			entry["violations"] = int(entry["violations"]) + 1
 			if int(entry["violations"]) > _max_violations:
@@ -206,8 +211,7 @@ func _on_pending_message(peer_id: int, message: Dictionary) -> void:
 		_refuse(peer_id, CoreResult.error_code(checked), str(checked["error"]["message"]))
 		return
 	if not str(checked["player_id"]).is_empty():
-		# Rejoin is added in the reconnect step; until then an unknown identity is rejected.
-		_refuse(peer_id, ErrorCodes.BAD_TOKEN, "Unknown player or rejoin token.")
+		_handle_rejoin(peer_id, str(checked["player_id"]), str(checked["rejoin_token"]))
 		return
 	if admission_policy.is_valid():
 		var verdict: Dictionary = admission_policy.call(checked["player_name"])
@@ -220,6 +224,8 @@ func _on_pending_message(peer_id: int, message: Dictionary) -> void:
 
 func _on_player_message(peer_id: int, message: Dictionary) -> void:
 	var player_id: String = registry.player_of_peer(peer_id)
+	if player_id.is_empty():
+		return  # the player was removed (kicked/left) but the connection is still closing
 	match message["type"]:
 		Protocol.T_PING:
 			_send(peer_id, Envelope.make(Protocol.T_PONG))
@@ -236,6 +242,33 @@ func _on_player_message(peer_id: int, message: Dictionary) -> void:
 
 # --- helpers ---------------------------------------------------------------------
 
+## A returning player proves who they are with player_id + rejoin_token. Unknown ids
+## and wrong tokens get the same answer so ids cannot be probed.
+func _handle_rejoin(peer_id: int, player_id: String, token: String) -> void:
+	if not registry.verify_token(player_id, token):
+		_refuse(peer_id, ErrorCodes.BAD_TOKEN, "Unknown player or rejoin token.")
+		return
+	if rejoin_policy.is_valid():
+		var verdict: Dictionary = rejoin_policy.call(player_id)
+		if not CoreResult.is_ok(verdict):
+			_refuse(peer_id, CoreResult.error_code(verdict), str(verdict["error"]["message"]))
+			return
+	var stale_peer: int = registry.peer_of(player_id)
+	if stale_peer != 0:
+		_replace_connection(stale_peer)
+	registry.rotate_token(player_id, token)
+	_admit(peer_id, player_id, true)
+
+
+## The same player connected again before we noticed the old connection died.
+func _replace_connection(old_peer_id: int) -> void:
+	_send(old_peer_id, Envelope.make(Protocol.T_SESSION_END, {"code": ErrorCodes.REPLACED, "message": "You connected from somewhere else."}))
+	_closing[old_peer_id] = true
+	_players.erase(old_peer_id)
+	registry.unbind_peer(old_peer_id)
+	transport.disconnect_peer(old_peer_id)
+
+
 func _admit(peer_id: int, player_id: String, rejoined: bool) -> void:
 	var now: int = _now()
 	_pending.erase(peer_id)
@@ -244,6 +277,7 @@ func _admit(peer_id: int, player_id: String, rejoined: bool) -> void:
 		"last_heard": now,
 		"last_ping": now,
 		"violations": 0,
+		"unconfirmed": rejoined,  # until their first message proves they got the new token
 	}
 	registry.bind_peer(player_id, peer_id)
 	var extra: Dictionary = {}

@@ -22,6 +22,8 @@ const HANDSHAKE_TIMEOUT: String = "HANDSHAKE_TIMEOUT"
 const TOO_MANY_PENDING: String = "TOO_MANY_PENDING"
 const PING_TIMEOUT: String = "PING_TIMEOUT"
 const KICKED: String = "KICKED"
+const REPLACED: String = "REPLACED"
+const LEFT: String = "LEFT"  # the player asked to leave
 
 # Lobby
 const NOT_HOST: String = "NOT_HOST"

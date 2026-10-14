@@ -167,7 +167,8 @@ func test_guest_leave_returns_to_start_and_host_updates() -> void:
 	var host: LobbyScene = pair[0]
 	var guest: LobbyScene = pair[1]
 	guest.leave_button.pressed.emit()
-	assert_true(guest.start_view.visible)
+	assert_true(await _until(func() -> bool: return guest.start_view.visible))
+	assert_eq(guest.status_label.text, "", "leaving on purpose is not an error")
 	assert_true(await _until(func() -> bool: return host.players_box.get_child_count() == 1))
 
 
@@ -178,3 +179,31 @@ func test_host_leaving_ends_the_session_for_guests() -> void:
 	host.leave_button.pressed.emit()
 	assert_true(await _until(func() -> bool: return host.start_view.visible and guest.start_view.visible))
 	assert_string_contains(guest.status_label.text, "Left the session")
+
+
+func test_rejoin_button_brings_a_dropped_guest_back_as_the_same_player() -> void:
+	var pair: Array[LobbyScene] = await _host_and_guest()
+	var host: LobbyScene = pair[0]
+	var guest: LobbyScene = pair[1]
+	assert_false(guest.rejoin_button.visible)
+	var guest_id: String = guest._client.player_id
+	# The guest's connection drops (the host is fine): the host cuts the line.
+	var peer_id: int = host._host.session.registry.peer_of(guest_id)
+	host._host.session.transport.disconnect_peer(peer_id)
+	assert_true(await _until(func() -> bool: return guest.start_view.visible))
+	assert_true(guest.rejoin_button.visible, "offered because the connection was lost")
+	assert_string_contains(guest.status_label.text, "Left the session")
+	guest.rejoin_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return guest.lobby_view.visible and guest.players_box.get_child_count() == 2))
+	assert_eq(guest._client.player_id, guest_id, "same player")
+	assert_false(guest.rejoin_button.visible)
+	assert_eq(host.players_box.get_child_count(), 2)
+
+
+func test_rejoin_button_is_hidden_after_being_removed_by_the_host() -> void:
+	var pair: Array[LobbyScene] = await _host_and_guest()
+	var host: LobbyScene = pair[0]
+	var guest: LobbyScene = pair[1]
+	(host.players_box.get_child(1).get_child(2) as Button).pressed.emit()
+	assert_true(await _until(func() -> bool: return guest.start_view.visible))
+	assert_false(guest.rejoin_button.visible)

@@ -21,6 +21,7 @@ var port_spin: SpinBox
 var address_edit: LineEdit
 var host_button: Button
 var join_button: Button
+var rejoin_button: Button
 var status_label: Label
 var start_view: Control
 var lobby_view: Control
@@ -39,6 +40,10 @@ var _host: LobbyHost = null
 var _client: LobbyClient = null
 var _transport_config: Dictionary = {}
 var _state: Dictionary = {}
+var _joining_address: String = ""
+var _joining_name: String = ""
+## Set when the connection to a host dropped: {address, name, identity}. Enables Rejoin.
+var _resume: Dictionary = {}
 
 
 func setup(new_options: Dictionary) -> void:
@@ -124,6 +129,11 @@ func _build_start_view() -> Control:
 	join_row.add_child(join_button)
 	box.add_child(join_row)
 
+	rejoin_button = Button.new()
+	rejoin_button.text = "Rejoin the game you were in"
+	rejoin_button.pressed.connect(rejoin_session)
+	box.add_child(rejoin_button)
+
 	status_label = _label("")
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(status_label)
@@ -205,18 +215,34 @@ func join_session() -> void:
 	if address_edit.text.strip_edges().is_empty():
 		status_label.text = "Paste the address your host gave you."
 		return
+	_resume = {}
+	_begin_join(address_edit.text, cleaned["name"], {})
+
+
+## Comes back to a game after the connection dropped, using the identity the host gave us.
+func rejoin_session() -> void:
+	if _resume.is_empty():
+		return
+	var resume: Dictionary = _resume
+	_begin_join(resume["address"], resume["name"], resume["identity"])
+
+
+func _begin_join(address: String, player_name: String, identity: Dictionary) -> void:
 	var config: Dictionary = _transport_config.duplicate()
 	_client = LobbyClient.new(TransportFactory.create(config), str(options["app_version"]), str(options["game_id"]))
-	_client.joined.connect(func(_player_id: String) -> void: _show_lobby_view())
+	_client.joined.connect(func(_player_id: String) -> void: _on_joined())
 	_client.join_failed.connect(_on_join_failed)
 	_client.state_changed.connect(_on_state_changed)
 	_client.action_failed.connect(func(_code: String, message: String, _action: String) -> void: lobby_status_label.text = message)
 	_client.game_started.connect(_on_game_started)
 	_client.left.connect(_on_left)
+	_joining_address = address
+	_joining_name = player_name
 	join_button.disabled = true
 	host_button.disabled = true
+	rejoin_button.disabled = true
 	status_label.text = "Connecting..."
-	_client.join(address_edit.text, cleaned["name"], config)
+	_client.join(address, player_name, config, identity)
 
 
 func leave() -> void:
@@ -224,9 +250,8 @@ func leave() -> void:
 		lobby_status_label.text = "Closing..."
 		_host.close()  # _on_host_closed returns us to the start view
 	elif _client != null:
-		_client.leave()
-		_forget_client()
-		_show_start_view("")
+		lobby_status_label.text = "Leaving..."
+		_client.leave()  # _on_left returns us to the start view
 
 
 func _act(action: Dictionary) -> void:
@@ -249,14 +274,25 @@ func _on_game_started(state: Dictionary) -> void:
 	game_started.emit(state)
 
 
-func _on_join_failed(_code: String, message: String) -> void:
+func _on_joined() -> void:
+	_resume = {}
+	rejoin_button.visible = false
+	_show_lobby_view()
+
+
+func _on_join_failed(code: String, message: String) -> void:
+	if code != ErrorCodes.CONNECT_FAILED:
+		_resume = {}  # the host answered and said no; retrying with the same identity won't help
 	_forget_client()
 	_show_start_view("Could not join: %s" % message)
 
 
-func _on_left(_code: String, message: String) -> void:
+func _on_left(code: String, message: String) -> void:
+	_resume = {}
+	if code == ErrorCodes.HOST_LOST and _client != null:
+		_resume = {"address": _joining_address, "name": _joining_name, "identity": _client.identity()}
 	_forget_client()
-	_show_start_view("Left the session: %s" % message)
+	_show_start_view("" if code == ErrorCodes.LEFT else "Left the session: %s" % message)
 
 
 func _on_host_closed() -> void:
@@ -274,6 +310,8 @@ func _show_start_view(message: String) -> void:
 	lobby_view.visible = false
 	join_button.disabled = false
 	host_button.disabled = false
+	rejoin_button.disabled = false
+	rejoin_button.visible = not _resume.is_empty()
 	status_label.text = message
 
 

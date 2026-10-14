@@ -62,3 +62,30 @@ func test_to_dict_round_trip_keeps_identity_but_not_connections() -> void:
 	assert_true(copy.verify_token("p1", reg.token_of("p1")))
 	assert_eq(copy.peer_of("p1"), 0)
 	assert_eq(copy.create("C")["player_id"], "p3")
+
+
+func test_previous_token_stays_valid_until_confirmed() -> void:
+	var reg: PlayerRegistry = PlayerRegistry.new()
+	var a: String = reg.create("A")["token"]
+	var b: String = reg.rotate_token("p1", a)
+	assert_true(reg.verify_token("p1", a), "just-replaced token still works")
+	assert_true(reg.verify_token("p1", b))
+	reg.confirm_token("p1")
+	assert_false(reg.verify_token("p1", a))
+	assert_true(reg.verify_token("p1", b))
+
+
+func test_rotate_without_keep_valid_invalidates_immediately() -> void:
+	var reg: PlayerRegistry = PlayerRegistry.new()
+	var a: String = reg.create("A")["token"]
+	reg.rotate_token("p1")
+	assert_false(reg.verify_token("p1", a))
+
+
+func test_saved_registry_does_not_carry_the_previous_token() -> void:
+	var reg: PlayerRegistry = PlayerRegistry.new()
+	var a: String = reg.create("A")["token"]
+	var b: String = reg.rotate_token("p1", a)
+	var copy: PlayerRegistry = PlayerRegistry.from_dict(reg.to_dict())
+	assert_true(copy.verify_token("p1", b))
+	assert_false(copy.verify_token("p1", a))

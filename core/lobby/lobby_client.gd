@@ -14,9 +14,12 @@ signal game_started(state: Dictionary)
 signal game_message(message: Dictionary)  # non-lobby traffic, for the game layer
 signal left(code: String, message: String)  # session over: HOST_CLOSED, KICKED, HOST_LOST ...
 
+const _LEAVE_WAIT_MSEC: int = 1500
+
 var session: ClientSession
 var state: Dictionary = {}
 var player_id: String = ""
+var _leave_deadline: int = 0
 
 
 func _init(transport: Transport, app_version: String, game_id: String, session_options: Dictionary = {}) -> void:
@@ -36,13 +39,29 @@ func join(address: String, player_name: String, transport_config: Dictionary = {
 
 func poll() -> void:
 	session.poll()
+	if _leave_deadline != 0 and int(session.clock.call()) >= _leave_deadline:
+		leave_now()
 
 
+## Leaves politely: tells the host and waits for it to close the connection, so the
+## host reliably records that we left. `left` fires when done (code LEFT).
 func leave() -> void:
-	if session.is_active():
-		act({"type": "leave"})
+	if not session.is_active():
+		leave_now()
+		return
+	_leave_deadline = int(session.clock.call()) + _LEAVE_WAIT_MSEC
+	act({"type": "leave"})
+
+
+## Drops the connection immediately; the host sees a lost connection, not a goodbye.
+func leave_now() -> void:
 	session.leave()
-	_release()
+	_finish(ErrorCodes.LEFT, "You left the session.")
+
+
+## What this player needs to come back later: pass it to join() as `rejoin`.
+func identity() -> Dictionary:
+	return {"player_id": session.player_id, "rejoin_token": session.rejoin_token}
 
 
 func act(action: Dictionary) -> void:
@@ -118,8 +137,11 @@ func _on_lobby_state(lobby: Dictionary) -> void:
 
 
 func _finish(code: String, message: String) -> void:
+	_leave_deadline = 0
+	var was_attached: bool = session.connected.is_connected(_on_connected)
 	_release()
-	left.emit(code, message)
+	if was_attached:  # only the first ending is reported
+		left.emit(code, message)
 
 
 ## Drops the signal wiring so this object and its session can be freed.

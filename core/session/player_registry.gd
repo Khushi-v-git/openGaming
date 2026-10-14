@@ -3,6 +3,10 @@ extends RefCounted
 ## Host-only table of players: stable player_id, display name, secret rejoin token and
 ## the transport peer currently bound to the player (0 = not connected).
 ## Tokens live only here and in saves; they are never put in a broadcast (rule 9).
+##
+## Tokens rotate on every rejoin. The token that was just replaced stays valid until
+## confirm_token() (the player's first message on the new connection), so a welcome
+## lost on a flaky connection cannot lock a player out.
 
 var _players: Dictionary = {}  # player_id -> {player_id, name, token, peer_id}
 var _next_index: int = 1
@@ -16,6 +20,7 @@ func create(player_name: String) -> Dictionary:
 		"player_id": player_id,
 		"name": player_name,
 		"token": _new_token(),
+		"prev_token": "",
 		"peer_id": 0,
 	}
 	return _players[player_id].duplicate()
@@ -82,20 +87,29 @@ func count() -> int:
 func verify_token(player_id: String, token: String) -> bool:
 	if not _players.has(player_id) or token.is_empty():
 		return false
-	return _players[player_id]["token"] == token
+	var p: Dictionary = _players[player_id]
+	return p["token"] == token or p["prev_token"] == token
 
 
 func token_of(player_id: String) -> String:
 	return str(_players.get(player_id, {}).get("token", ""))
 
 
-## Replaces the token and returns the new one.
-func rotate_token(player_id: String) -> String:
+## Replaces the token and returns the new one. `keep_valid` (the token the player
+## just presented) stays usable until confirm_token(); "" invalidates the old one now.
+func rotate_token(player_id: String, keep_valid: String = "") -> String:
 	if not _players.has(player_id):
 		return ""
 	var token: String = _new_token()
 	_players[player_id]["token"] = token
+	_players[player_id]["prev_token"] = keep_valid
 	return token
+
+
+## The player proved they received the current token: retire the previous one.
+func confirm_token(player_id: String) -> void:
+	if _players.has(player_id):
+		_players[player_id]["prev_token"] = ""
 
 
 ## Plain data including secret tokens. Peer bindings are not saved.
@@ -116,6 +130,7 @@ static func from_dict(data: Dictionary) -> PlayerRegistry:
 			"player_id": p["player_id"],
 			"name": p["name"],
 			"token": p["token"],
+			"prev_token": "",
 			"peer_id": 0,
 		}
 	return registry

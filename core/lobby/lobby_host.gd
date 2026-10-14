@@ -15,6 +15,9 @@ signal closed()
 var session: HostSession
 var state: Dictionary
 var local_player_id: String
+## Optional: (player_id) -> Dictionary, the game's view_for() for that player. Used to
+## resend the full current game state to a player who rejoins mid-game (rules 7, 9).
+var game_view_provider: Callable = Callable()
 
 
 func _init(transport: Transport, app_version: String, game_id: String, host_name: String, min_players: int, max_players: int, session_options: Dictionary = {}) -> void:
@@ -22,6 +25,7 @@ func _init(transport: Transport, app_version: String, game_id: String, host_name
 	local_player_id = session.registry.create(host_name)["player_id"]
 	state = LobbyLogic.create(game_id, min_players, max_players, local_player_id, host_name)
 	session.admission_policy = _admission
+	session.rejoin_policy = _rejoin_policy
 	session.player_joined.connect(_on_player_joined)
 	session.player_disconnected.connect(_on_player_disconnected)
 	session.player_message.connect(_on_player_message)
@@ -53,11 +57,28 @@ func _admission(player_name: String) -> Dictionary:
 	return LobbyLogic.can_join(state, player_name)
 
 
-func _on_player_joined(player_id: String, _rejoined: bool) -> void:
-	var result: Dictionary = LobbyLogic.apply(state, player_id, {"type": "join", "name": session.registry.name_of(player_id)})
+func _rejoin_policy(player_id: String) -> Dictionary:
+	var index: int = LobbyLogic.find_slot(state, player_id)
+	if index >= 0:
+		if state["slots"][index]["left"]:
+			return CoreResult.failure(ErrorCodes.PLAYER_LEFT, "You left this game.")
+		return CoreResult.success()
+	if state["phase"] != LobbyLogic.PHASE_OPEN:
+		return CoreResult.failure(ErrorCodes.NOT_IN_LOBBY, "You are no longer part of this game.")
+	# Their slot was freed when they dropped from the open lobby: they need a free seat.
+	return LobbyLogic.can_join(state, session.registry.name_of(player_id))
+
+
+func _on_player_joined(player_id: String, rejoined: bool) -> void:
+	var action: Dictionary = {"type": "join", "name": session.registry.name_of(player_id)}
+	if rejoined and LobbyLogic.find_slot(state, player_id) >= 0:
+		action = {"type": "reconnected"}
+	var result: Dictionary = LobbyLogic.apply(state, player_id, action)
 	if CoreResult.is_ok(result):
 		state = result["state"]
-		_publish()
+		_publish()  # everyone, including a rejoiner, gets the full current lobby state
+		if rejoined:
+			_send_game_view(player_id)
 	else:
 		# Lost a race between admission and join (e.g. last seat taken): remove them.
 		session.kick_player(player_id, CoreResult.error_code(result), str(result["error"]["message"]))
@@ -91,6 +112,7 @@ func _on_player_message(player_id: String, message: Dictionary) -> void:
 
 func _on_session_closed() -> void:
 	session.admission_policy = Callable()
+	session.rejoin_policy = Callable()
 	session.player_joined.disconnect(_on_player_joined)
 	session.player_disconnected.disconnect(_on_player_disconnected)
 	session.player_message.disconnect(_on_player_message)
@@ -112,11 +134,38 @@ func _apply_player_action(player_id: String, action: Dictionary) -> Dictionary:
 		"set_name":
 			session.registry.set_name(player_id, str(LobbyLogic.find_slot_name(state, player_id)))
 		"kick":
-			session.kick_player(str(action["player_id"]), ErrorCodes.KICKED, "You were removed by the host.")
+			var target: String = str(action["player_id"])
+			session.kick_player(target, ErrorCodes.KICKED, "You were removed by the host.")
+			_revoke_if_gone(target)
+		"leave":
+			session.kick_player(player_id, ErrorCodes.LEFT, "You left the lobby.")  # closes their connection
+			_revoke_if_gone(player_id)
+		"start":
+			_forget_players_without_a_seat()
 	_publish()
 	if type == "start":
 		game_started.emit(state)
 	return result
+
+
+## A player with no slot left (kicked or left in the open lobby) must not be able to
+## come back with their old token.
+func _revoke_if_gone(player_id: String) -> void:
+	if LobbyLogic.find_slot(state, player_id) < 0:
+		session.registry.remove(player_id)
+
+
+## Once the game starts, drop identities of players who dropped out of the open lobby.
+func _forget_players_without_a_seat() -> void:
+	for player_id: String in session.registry.player_ids():
+		_revoke_if_gone(player_id)
+
+
+func _send_game_view(player_id: String) -> void:
+	if state["phase"] != LobbyLogic.PHASE_IN_GAME or not game_view_provider.is_valid():
+		return
+	var view: Dictionary = game_view_provider.call(player_id)
+	session.send_to_player(player_id, Envelope.make(Protocol.T_GAME_STATE, {"rejoin": true, "view": view}))
 
 
 func _publish() -> void:
