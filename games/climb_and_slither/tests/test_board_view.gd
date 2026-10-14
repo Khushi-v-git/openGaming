@@ -232,3 +232,78 @@ func test_the_board_can_be_shown_for_a_different_board() -> void:
 	assert_eq(view.number_labels.size(), 30)
 	assert_eq(view.snake_sprites.size(), 1)
 	assert_gte(view.ladder_sprites.size(), 3)
+
+
+# --- animating pawns ----------------------------------------------------------------------------------------
+
+func _wait_for(flag: Array, frames: int = 240) -> void:
+	for _i: int in frames:
+		if flag[0]:
+			return
+		await get_tree().process_frame
+
+
+func test_an_instant_hop_puts_the_pawn_on_its_square_and_finishes_at_once() -> void:
+	var made: Array = await _view(Vector2i(793, 720))
+	var view: ClimbBoardView = made[1]
+	var finished: Array = [false]
+	view.animate({"op": "hop", "player_id": "p1", "to": 3, "duration": 0.16}, 0.0, func() -> void: finished[0] = true)
+	assert_true(finished[0])
+	_near(view.pawn_rest_position("p1"), view.square_center(3), "p1 on 3")
+	assert_almost_eq(view.pawn_node("p1").position.x, view._rest_sprite_position("p1").x, 0.01)
+	assert_false(view.is_animating())
+
+
+func test_a_timed_hop_finishes_and_ends_on_the_square() -> void:
+	var made: Array = await _view(Vector2i(793, 720))
+	var view: ClimbBoardView = made[1]
+	var finished: Array = [false]
+	view.animate({"op": "hop", "player_id": "p2", "to": 5, "duration": 0.16}, 4.0, func() -> void: finished[0] = true)
+	assert_true(view.is_animating())
+	await _wait_for(finished)
+	assert_true(finished[0], "the animation reported done")
+	assert_false(view.is_animating())
+	assert_almost_eq(view.pawn_node("p2").position.x, view._rest_sprite_position("p2").x, 0.01)
+	assert_almost_eq(view.pawn_node("p2").position.y, view._rest_sprite_position("p2").y, 0.01)
+
+
+func test_slide_shake_and_win_all_finish_and_leave_the_pawn_at_rest() -> void:
+	var made: Array = await _view(Vector2i(793, 720), {"p1": 5, "p2": 0, "p3": 0, "p4": 0})
+	var view: ClimbBoardView = made[1]
+	for step: Dictionary in [
+		{"op": "slide", "player_id": "p1", "kind": "ladder", "from": 5, "to": 27, "duration": 0.9},
+		{"op": "shake", "player_id": "p1", "duration": 0.3},
+		{"op": "win", "player_id": "p1", "duration": 1.0},
+	]:
+		var finished: Array = [false]
+		view.animate(step, 8.0, func() -> void: finished[0] = true)
+		await _wait_for(finished)
+		assert_true(finished[0], str(step["op"]))
+	var pawn_scale: float = ClimbBoardView.PAWN_CELLS * view.cell / ClimbBoardView.PAWN_TEXTURE_SIZE
+	assert_almost_eq(view.pawn_node("p1").scale.x, pawn_scale, 0.0001, "the win bounce ends at normal size")
+	_near(view.pawn_rest_position("p1"), view.square_center(27), "p1 ended on 27")
+
+
+func test_steps_that_are_not_for_pawns_finish_at_once() -> void:
+	var made: Array = await _view(Vector2i(793, 720))
+	var finished: Array = [false]
+	(made[1] as ClimbBoardView).animate({"op": "banner", "text": "x", "duration": 0.7}, 1.0, func() -> void: finished[0] = true)
+	assert_true(finished[0])
+
+
+func test_cancelling_an_animation_leaves_everything_at_rest() -> void:
+	var made: Array = await _view(Vector2i(793, 720))
+	var view: ClimbBoardView = made[1]
+	view.animate({"op": "slide", "player_id": "p1", "kind": "snake", "from": 24, "to": 2, "duration": 5.0}, 1.0, func() -> void: pass)
+	assert_true(view.is_animating())
+	view.cancel_animation()
+	assert_false(view.is_animating())
+	assert_almost_eq(view.pawn_node("p1").position.y, view._rest_sprite_position("p1").y, 0.01)
+
+
+func test_a_pawn_that_lands_with_another_makes_room_at_once() -> void:
+	var made: Array = await _view(Vector2i(793, 720), {"p1": 9, "p2": 0, "p3": 0, "p4": 0})
+	var view: ClimbBoardView = made[1]
+	var alone: Vector2 = view.pawn_node("p1").position
+	view.animate({"op": "hop", "player_id": "p2", "to": 9, "duration": 0.16}, 0.0, func() -> void: pass)
+	assert_ne(view.pawn_node("p1").position, alone, "the first pawn shifts to share the square")

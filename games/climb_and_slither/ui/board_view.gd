@@ -39,6 +39,7 @@ var _pawn_layer: Node2D
 var _start_label: Label
 var _crown: Texture2D
 var _ready_built: bool = false
+var _tween: Tween = null
 
 
 func _init() -> void:
@@ -201,6 +202,76 @@ func _sprite(path: String, placement: Transform2D) -> Sprite2D:
 	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	sprite.transform = placement
 	return sprite
+
+
+## Carries out one pawn step of a ClimbAnimationPlan ("hop", "slide", "shake" or "win"; the
+## other ops are the screen's business and finish at once). `done` is called when it ends.
+## `speed` is a multiplier; 0 means instant. Only one animation runs at a time.
+func animate(step: Dictionary, speed: float, done: Callable) -> void:
+	cancel_animation()
+	var op: String = str(step.get("op", ""))
+	var player_id: String = str(step.get("player_id", ""))
+	var sprite: Sprite2D = pawn_sprites.get(player_id, null)
+	if sprite == null or not ["hop", "slide", "shake", "win"].has(op):
+		done.call()
+		return
+	if op == "hop" or op == "slide":
+		_positions[player_id] = int(step["to"])
+	var rest: Vector2 = _rest_sprite_position(player_id)
+	var seconds: float = 0.0 if speed <= 0.0 else float(step["duration"]) / speed
+	_snap_others(player_id)
+	if seconds <= 0.0 or not is_inside_tree():
+		sprite.position = rest
+		done.call()
+		return
+	var tween: Tween = create_tween()
+	_tween = tween
+	match op:
+		"hop":
+			var lift: float = cell * 0.22
+			var mid: Vector2 = (sprite.position + rest) / 2.0 + Vector2(0.0, -lift)
+			tween.tween_property(sprite, "position", mid, seconds / 2.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+			tween.tween_property(sprite, "position", rest, seconds / 2.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		"slide":
+			tween.tween_property(sprite, "position", rest, seconds).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		"shake":
+			var amount: float = cell * 0.12
+			for offset: float in [-amount, amount, -amount * 0.6, amount * 0.6, 0.0]:
+				tween.tween_property(sprite, "position", rest + Vector2(offset, 0.0), seconds / 5.0)
+		"win":
+			var scale_up: Vector2 = sprite.scale * 1.35
+			var base_scale: Vector2 = sprite.scale
+			tween.tween_property(sprite, "scale", scale_up, seconds / 2.0).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			tween.tween_property(sprite, "scale", base_scale, seconds / 2.0)
+	tween.finished.connect(func() -> void:
+		if _tween == tween:
+			_tween = null
+			_place_pawns()
+			done.call())
+
+
+## Stops a running animation and puts every pawn on its resting spot.
+func cancel_animation() -> void:
+	if _tween != null:
+		_tween.kill()
+		_tween = null
+	_place_pawns()
+
+
+func is_animating() -> bool:
+	return _tween != null
+
+
+func _rest_sprite_position(player_id: String) -> Vector2:
+	var pawn_scale: float = PAWN_CELLS * cell / PAWN_TEXTURE_SIZE
+	return pawn_rest_position(player_id) - PAWN_PIVOT * pawn_scale
+
+
+## Pawns that are not the one moving jump to their resting spots (they may share a square now).
+func _snap_others(moving: String) -> void:
+	for player_id: String in pawn_sprites:
+		if player_id != moving:
+			(pawn_sprites[player_id] as Sprite2D).position = _rest_sprite_position(player_id)
 
 
 func _place_pawns() -> void:
