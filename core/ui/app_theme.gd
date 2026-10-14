@@ -4,8 +4,23 @@ extends RefCounted
 ## from the top-left light (so shadow falls bottom-right), no outlines or gradients.
 
 
+const FONT_PATH: String = "res://core/assets/fonts/Fredoka.ttf"
+const FALLBACK_FONT_PATH: String = "res://core/assets/fonts/Baloo2.ttf"  # Devanagari (and Vietnamese) names
+
+
+## Fredoka for text; Baloo 2 fills in the scripts Fredoka does not have (both OFL 1.1).
+static func build_font() -> Font:
+	var font: FontFile = load(FONT_PATH)
+	var fallback: FontFile = load(FALLBACK_FONT_PATH)
+	var combined: FontVariation = FontVariation.new()
+	combined.base_font = font
+	combined.fallbacks = [fallback]
+	return combined
+
+
 static func build() -> Theme:
 	var theme: Theme = Theme.new()
+	theme.default_font = build_font()
 	theme.default_font_size = Tokens.FONT_SIZE
 
 	theme.set_color("font_color", "Label", Tokens.INK)
