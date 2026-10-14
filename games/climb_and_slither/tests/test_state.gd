@@ -103,7 +103,7 @@ func test_the_board_in_the_state_is_a_copy() -> void:
 	var board: Dictionary = _board()
 	var state: Dictionary = rules.new_game(["p1", "p2"], board, {}, 1)["state"]
 	state["board"]["snakes"].clear()
-	assert_eq(board["snakes"].size(), 11, "the caller's board is untouched")
+	assert_gt(board["snakes"].size(), 0, "the caller's board is untouched")
 
 
 func test_new_game_returns_an_empty_event_list() -> void:

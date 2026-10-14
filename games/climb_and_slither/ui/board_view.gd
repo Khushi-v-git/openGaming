@@ -47,13 +47,13 @@ func _init() -> void:
 
 
 func _ready() -> void:
-	_label_layer = Control.new()
-	_label_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_label_layer)
 	_ladder_layer = Node2D.new()
 	add_child(_ladder_layer)
 	_snake_layer = Node2D.new()
 	add_child(_snake_layer)
+	_label_layer = Control.new()  # numbers draw above the art so a snake never hides one
+	_label_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_label_layer)
 	_pawn_layer = Node2D.new()
 	add_child(_pawn_layer)
 	_crown = load(ClimbArt.CROWN_PATH)
@@ -121,7 +121,9 @@ func _build() -> void:
 		var label: Label = Label.new()
 		label.text = str(square)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		label.add_theme_color_override("font_color", Color(Tokens.INK, 0.78))
+		label.add_theme_color_override("font_color", Color(Tokens.INK, 0.85))
+		label.add_theme_color_override("font_outline_color", Color(Tokens.PAPER_CREAM, 0.9))
+		label.add_theme_constant_override("outline_size", 4)
 		_label_layer.add_child(label)
 		number_labels.append(label)
 	if _start_label == null:

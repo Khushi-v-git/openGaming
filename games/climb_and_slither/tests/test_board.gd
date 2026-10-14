@@ -47,7 +47,7 @@ func test_the_classic_board_loads_and_is_valid() -> void:
 	assert_eq(board["columns"], 10)
 	assert_eq(board["name"], "Classic")
 	assert_eq(board["ladders"].size(), 8)
-	assert_eq(board["snakes"].size(), 11)
+	assert_eq(board["snakes"].size(), 9)
 
 
 func test_the_classic_board_satisfies_every_rule_checked_independently_of_the_validator() -> void:
@@ -75,8 +75,8 @@ func test_the_classic_board_satisfies_every_rule_checked_independently_of_the_va
 	assert_eq(parsed["snakes"].size() + parsed["ladders"].size(), starts.size())
 
 
-func test_the_classic_board_has_a_shared_end_square_which_is_allowed() -> void:
-	var board: Dictionary = ClimbBoard.load_file()["board"]
+func test_a_board_with_a_shared_end_square_is_allowed() -> void:
+	var board: Dictionary = ClimbRig.classic()
 	var tails: Dictionary = {}
 	for jump: Dictionary in board["snakes"]:
 		tails[jump["to"]] = int(tails.get(jump["to"], 0)) + 1

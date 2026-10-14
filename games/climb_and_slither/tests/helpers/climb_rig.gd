@@ -49,8 +49,13 @@ static func board(snakes: Array = [], ladders: Array = [], size: int = 100, colu
 	return result["board"]
 
 
+## The board the rules tests were written against (a frozen copy, so changing the shipped
+## board does not change their expected squares and golden games).
+const LEGACY_BOARD_PATH: String = "res://games/climb_and_slither/tests/fixtures/legacy_board.json"
+
+
 static func classic() -> Dictionary:
-	return ClimbBoard.load_file()["board"]
+	return ClimbBoard.load_file(LEGACY_BOARD_PATH)["board"]
 
 
 ## A started game. `rolls` are the first dice (see seed_for); `positions` overrides where

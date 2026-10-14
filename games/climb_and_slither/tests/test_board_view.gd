@@ -90,7 +90,7 @@ func test_every_snake_has_a_sprite_with_its_head_and_tail_on_the_right_squares()
 	for window: Vector2i in [Vector2i(793, 720), Vector2i(1190, 1080)]:
 		var made: Array = await _view(window)
 		var view: ClimbBoardView = made[1]
-		assert_eq(view.snake_sprites.size(), 11)
+		assert_eq(view.snake_sprites.size(), 9)
 		for sprite: Sprite2D in view.snake_sprites:
 			var info: Dictionary = sprite.get_meta("snake")
 			var art: Dictionary = _snake_art(info["art"])
@@ -207,15 +207,15 @@ func test_resizing_does_not_leak_nodes() -> void:
 	var made: Array = await _view(Vector2i(793, 720))
 	var viewport: SubViewport = made[0]
 	var view: ClimbBoardView = made[1]
-	var count_before: int = view.get_child(1).get_child_count() + view.get_child(2).get_child_count()
+	var count_before: int = view.get_child(0).get_child_count() + view.get_child(1).get_child_count()
 	for window: Vector2i in [Vector2i(1190, 1080), Vector2i(700, 600), Vector2i(793, 720)]:
 		viewport.size = window
 		await get_tree().process_frame
 		await get_tree().process_frame
-	assert_eq(view.get_child(1).get_child_count() + view.get_child(2).get_child_count(), count_before)
+	assert_eq(view.get_child(0).get_child_count() + view.get_child(1).get_child_count(), count_before)
 	assert_eq(view.number_labels.size(), 100)
 	assert_eq(view.pawn_sprites.size(), 4)
-	assert_eq(view.get_child_count(), 4, "label layer, ladder layer, snake layer, pawn layer")
+	assert_eq(view.get_child_count(), 4, "ladder layer, snake layer, label layer, pawn layer")
 
 
 func test_the_board_can_be_shown_for_a_different_board() -> void:
