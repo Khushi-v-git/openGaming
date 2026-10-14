@@ -1003,3 +1003,42 @@ func test_a_resumed_game_waits_until_everyone_has_come_back() -> void:
 	var b: LobbyClientRig = await join_player(host, "Bo", played["ids"]["b"])
 	assert_true(await converge(host, [a, b]))
 	assert_false(host.state()["paused"])
+
+
+# --- games bigger than four players -----------------------------------------------
+
+func test_a_five_player_game_fills_refuses_a_sixth_and_starts() -> void:
+	var host: LobbyHostRig = await start_lobby(5, 5)
+	var guests: Array = []
+	for i: int in 4:
+		guests.append(await join_player(host, "Guest%d" % i))
+	assert_eq(host.state()["slots"].size(), 5)
+	var sixth: LobbyClientRig = await join_player(host, "Sixth")
+	assert_eq(sixth.recorder.join_failures[0]["code"], ErrorCodes.ROOM_FULL)
+	assert_eq(CoreResult.error_code(host.lobby.act({"type": "start"})), ErrorCodes.NOT_ALL_READY)
+	await _start_game_with(host, guests)
+	assert_eq(host.state()["phase"], LobbyLogic.PHASE_IN_GAME)
+	for guest: LobbyClientRig in guests:
+		assert_eq(guest.recorder.started, 1)
+
+
+func test_a_game_needing_more_than_four_will_not_start_early() -> void:
+	var host: LobbyHostRig = await start_lobby(5, 6)
+	var guests: Array = []
+	for i: int in 3:
+		guests.append(await join_player(host, "Guest%d" % i))
+	for guest: LobbyClientRig in guests:
+		guest.client.set_ready(true)
+	await converge(host, guests)
+	assert_eq(CoreResult.error_code(host.lobby.act({"type": "start"})), ErrorCodes.NOT_ENOUGH_PLAYERS, "4 players is not enough for a 5-player game")
+
+
+func test_eight_players_can_join_and_all_see_the_same_lobby() -> void:
+	var host: LobbyHostRig = await start_lobby(3, 8)
+	var guests: Array = []
+	for i: int in 7:
+		guests.append(await join_player(host, "Guest%d" % i))
+	assert_true(await converge(host, guests))
+	assert_eq(host.state()["slots"].size(), 8)
+	for guest: LobbyClientRig in guests:
+		assert_eq(guest.client.state, host.state())

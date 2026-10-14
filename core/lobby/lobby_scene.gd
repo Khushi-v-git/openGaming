@@ -43,6 +43,7 @@ var lobby_view: Control
 var address_label: Label
 var copy_button: Button
 var players_box: VBoxContainer
+var players_scroll: ScrollContainer  # the list scrolls when a big game does not fit the window
 var claims_box: VBoxContainer  # host only: returning players waiting to be let in
 var notice_label: Label  # "Waiting for X to come back."
 var continue_button: Button  # host only, while paused: continue without waiting
@@ -122,6 +123,16 @@ func _update_layout() -> void:
 		return
 	var wanted: float = clampf(size.x * 0.4, 520.0, 760.0)
 	panel.custom_minimum_size.x = minf(wanted, maxf(0.0, size.x - 2.0 * Tokens.SPACE_L))
+	_fit_players_list()
+
+
+## The player list takes the room it needs, up to about 40% of the window height, and
+## scrolls beyond that, so games with many players still fit from 1280x720 up.
+func _fit_players_list() -> void:
+	if players_scroll == null:
+		return
+	var needed: float = players_box.get_combined_minimum_size().y
+	players_scroll.custom_minimum_size.y = minf(needed, maxf(120.0, size.y * 0.4))
 
 
 func _build_start_view() -> Control:
@@ -197,7 +208,11 @@ func _build_lobby_view() -> Control:
 	box.add_child(address_row)
 
 	players_box = VBoxContainer.new()
-	box.add_child(players_box)
+	players_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	players_scroll = ScrollContainer.new()
+	players_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	players_scroll.add_child(players_box)
+	box.add_child(players_scroll)
 
 	claims_box = VBoxContainer.new()
 	box.add_child(claims_box)
@@ -453,6 +468,7 @@ func _render() -> void:
 			ready_button.set_pressed_no_signal(bool(slot["ready"]))  # the toggle mirrors the host's state
 	_render_claims(is_host)
 	_render_pause(is_host)
+	_fit_players_list()
 	var started: bool = _state["phase"] == LobbyLogic.PHASE_IN_GAME
 	ready_button.disabled = started
 	if started:

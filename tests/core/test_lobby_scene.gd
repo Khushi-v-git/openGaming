@@ -604,3 +604,29 @@ func test_the_busiest_host_screen_still_fits_at_1280x720() -> void:
 	await get_tree().process_frame
 	assert_true(host.continue_button.visible)
 	_assert_fits(viewport, host, "busiest host screen")
+
+
+# --- bigger games (5+ players) ----------------------------------------------------
+
+func _lobby_of(count: int, size: Vector2i) -> Array:
+	var made: Array = await _in_viewport(size, "Hosty")
+	var host: LobbyScene = made[1]
+	host.options["max_players"] = 8
+	await _fill_lobby(host)
+	for i: int in count - 1:
+		var guest: LobbyScene = _make_scene("Guest%d" % i, {"max_players": 8})
+		guest.address_edit.text = host.shared_address
+		guest.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return host.players_box.get_child_count() == count))
+	await get_tree().process_frame
+	await get_tree().process_frame
+	return made
+
+
+func test_five_and_eight_player_lobbies_fit_at_1280x720() -> void:
+	for count: int in [5, 6, 8]:
+		var made: Array = await _lobby_of(count, Vector2i(1280, 720))
+		_assert_fits(made[0], made[1], "%d players" % count)
+		for child: Node in (made[0] as SubViewport).get_children():
+			child.queue_free()
+		await get_tree().process_frame

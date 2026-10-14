@@ -240,3 +240,13 @@ func test_validator_is_usable_by_the_lobby() -> void:
 	var validator: Callable = registry.validator()
 	assert_true(validator.call("alpha"))
 	assert_false(validator.call("climb_and_slither"))
+
+
+func test_games_with_five_or_more_players_are_fine() -> void:
+	for pair: Array in [[2, 5], [5, 5], [3, 8], [2, 16]]:
+		var data: Dictionary = _alpha()
+		data["min_players"] = pair[0]
+		data["max_players"] = pair[1]
+		var r: Dictionary = GameManifest.validate(data, ALPHA_DIR)
+		assert_true(CoreResult.is_ok(r), "counts %s" % str(pair))
+		assert_true(GameManifest.supports_player_count(r["manifest"], 5) == (pair[0] <= 5 and pair[1] >= 5))
