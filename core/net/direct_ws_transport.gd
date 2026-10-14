@@ -20,7 +20,7 @@ const DEFAULT_PORT: int = 24680
 const _BUFFER_BYTES: int = Protocol.MAX_MESSAGE_BYTES * 2
 const _HEARTBEAT_SEC: float = 15.0  # keepalive for idle tunnels; liveness is the app-level ping
 const _PENDING_TIMEOUT_MSEC: int = 5000
-const _CLOSE_GRACE_MSEC: int = 1000
+const _CLOSE_GRACE_MSEC: int = 250  # how long a kicked peer gets to close first
 const _DEFAULT_JOIN_TIMEOUT_MSEC: int = 10000
 
 enum Role { NONE, HOST, JOINING, CLIENT }
@@ -123,7 +123,11 @@ func disconnect_peer(peer_id: int) -> void:
 			var entry: Dictionary = _peers.get(peer_id, {})
 			if entry.is_empty() or entry["close_deadline"] != 0:
 				return
-			(entry["ws"] as WebSocketPeer).close(1000, "disconnected by host")
+			# Godot's WebSocketPeer drops unread inbound packets when a close frame arrives
+			# in the same poll, so a message sent just before a kick (a reject, or the
+			# reason for it) could be lost. Flush it now and let the peer close first;
+			# we force the close after a short grace period.
+			(entry["ws"] as WebSocketPeer).poll()
 			entry["close_deadline"] = Time.get_ticks_msec() + _CLOSE_GRACE_MSEC
 		Role.CLIENT:
 			if peer_id == HOST_PEER_ID:
@@ -222,10 +226,10 @@ func _poll_peer(peer_id: int, now: int) -> void:
 			disconnect_peer(peer_id)
 			return
 	var state: int = ws.get_ready_state()
-	var timed_out: bool = closing and now > int(entry["close_deadline"])
-	if state == WebSocketPeer.STATE_CLOSED or timed_out:
-		if timed_out and state != WebSocketPeer.STATE_CLOSED:
-			ws.close()
+	var grace_over: bool = closing and now >= int(entry["close_deadline"])
+	if state == WebSocketPeer.STATE_CLOSED or grace_over:
+		if state != WebSocketPeer.STATE_CLOSED:
+			_flush_close(ws)
 		_peers.erase(peer_id)
 		peer_disconnected.emit(peer_id)
 

@@ -12,7 +12,7 @@ const FRAME_DELAY_MSEC: int = 1
 static func until(test: Node, transports: Array, condition: Callable, max_frames: int = DEFAULT_MAX_FRAMES) -> bool:
 	for _i: int in max_frames:
 		for transport: Variant in transports:
-			(transport as Transport).poll()
+			transport.poll()  # a Transport, HostSession or ClientSession
 		if condition.call():
 			return true
 		OS.delay_msec(FRAME_DELAY_MSEC)
@@ -24,6 +24,6 @@ static func until(test: Node, transports: Array, condition: Callable, max_frames
 static func frames(test: Node, transports: Array, count: int) -> void:
 	for _i: int in count:
 		for transport: Variant in transports:
-			(transport as Transport).poll()
+			transport.poll()
 		OS.delay_msec(FRAME_DELAY_MSEC)
 		await test.get_tree().process_frame
