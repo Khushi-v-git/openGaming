@@ -11,6 +11,12 @@ extends RefCounted
 ##   so callers can rely on one consistent, non-reentrant delivery point.
 ## - For one peer, peer_connected comes first, then its messages in send order, and
 ##   peer_disconnected comes last. A peer_id is never reused within a session.
+## - host_session() starts hosting. It returns a failure only if hosting could not
+##   even start (bad config, port in use): then nothing was started. Otherwise it
+##   returns {ok: true} and the transport later reports exactly one of session_ready
+##   (with the address or room code to share) or host_failed. A direct transport is
+##   ready at the next poll(); a relay is ready once the relay has registered the room.
+##   leave() before either event cancels it silently.
 ## - join_session() reports exactly one of join_succeeded / join_failed. After
 ##   join_succeeded the host's peer_connected(HOST_PEER_ID) is NOT emitted; the join
 ##   itself is the connection event. If the host goes away, a client gets
@@ -27,10 +33,13 @@ signal peer_connected(peer_id: int)
 signal peer_disconnected(peer_id: int)
 signal join_succeeded()
 signal join_failed(reason: String)
+signal session_ready(info: Dictionary)  # hosting is live: {address, kind, ...}
+signal host_failed(reason: String)  # hosting failed after it had started; transport is inactive
 
 
-## Starts hosting. Returns {ok, address, kind}: `address` is what joiners enter
-## (host:port for direct, a room code for relays); `kind` names the transport.
+## Starts hosting. Returns {ok: true} or a failure if hosting could not start. What
+## joiners must enter (`address`: host:port for direct, a room code for relays) and
+## the transport `kind` arrive in session_ready({address, kind, ...}).
 func host_session(_config: Dictionary) -> Dictionary:
 	return _not_implemented()
 

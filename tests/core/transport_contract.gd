@@ -35,12 +35,16 @@ func pump(condition: Callable, max_frames: int = NetWait.DEFAULT_MAX_FRAMES) -> 
 	return await NetWait.until(self, _transports(), condition, max_frames)
 
 
+## Starts hosting and waits for session_ready (the address arrives there).
 func start_host() -> TransportRig:
 	var rig: TransportRig = TransportRig.new(env.make_transport())
 	_rigs.append(rig)
-	var info: Dictionary = rig.transport.host_session(env.host_config())
-	assert_true(CoreResult.is_ok(info), "host_session failed: %s" % str(info))
-	rig.address = str(info.get("address", ""))
+	var result: Dictionary = rig.transport.host_session(env.host_config())
+	assert_true(CoreResult.is_ok(result), "host_session failed: %s" % str(result))
+	var ok: bool = await pump(func() -> bool: return not rig.recorder.ready.is_empty() or not rig.recorder.host_failures.is_empty())
+	assert_true(ok and rig.recorder.host_failures.is_empty(), "session_ready never arrived")
+	if not rig.recorder.ready.is_empty():
+		rig.address = str(rig.recorder.ready[0].get("address", ""))
 	return rig
 
 
@@ -57,14 +61,43 @@ func join_client(host: TransportRig) -> TransportRig:
 
 # --- tests -----------------------------------------------------------------------
 
-func test_host_session_returns_address_and_kind() -> void:
-	var host: TransportRig = start_host()
+func test_session_ready_gives_address_and_kind_exactly_once() -> void:
+	var host: TransportRig = await start_host()
 	assert_ne(host.address, "")
+	assert_ne(str(host.recorder.ready[0].get("kind", "")), "")
 	assert_true(host.transport.is_active())
+	await NetWait.frames(self, _transports(), 10)
+	assert_eq(host.recorder.ready.size(), 1)
+	assert_eq(host.recorder.host_failures.size(), 0)
+
+
+func test_session_ready_only_comes_from_poll() -> void:
+	var rig: TransportRig = TransportRig.new(env.make_transport())
+	_rigs.append(rig)
+	assert_true(CoreResult.is_ok(rig.transport.host_session(env.host_config())))
+	assert_eq(rig.recorder.ready.size(), 0, "not before poll")
+	assert_true(rig.transport.is_active(), "hosting has started even though it is not ready yet")
+	assert_true(await pump(func() -> bool: return rig.recorder.ready.size() == 1))
+
+
+func test_leave_before_ready_cancels_quietly() -> void:
+	var rig: TransportRig = TransportRig.new(env.make_transport())
+	_rigs.append(rig)
+	rig.transport.host_session(env.host_config())
+	rig.transport.leave()
+	await NetWait.frames(self, _transports(), 10)
+	assert_eq(rig.recorder.ready.size(), 0)
+	assert_eq(rig.recorder.host_failures.size(), 0)
+	assert_false(rig.transport.is_active())
+
+
+func test_hosting_again_while_active_is_refused() -> void:
+	var host: TransportRig = await start_host()
+	assert_false(CoreResult.is_ok(host.transport.host_session(env.host_config())))
 
 
 func test_join_connects_both_ends() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	assert_eq(client.recorder.join_ok_count, 1)
 	assert_eq(host.recorder.connected.size(), 1)
@@ -86,7 +119,7 @@ func test_join_to_unknown_address_fails() -> void:
 
 
 func test_client_to_host_message() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	client.transport.send(Transport.HOST_PEER_ID, Envelope.make("t", {"n": 5, "s": "hi"}))
 	var ok: bool = await pump(func() -> bool: return host.recorder.messages.size() >= 1)
@@ -98,7 +131,7 @@ func test_client_to_host_message() -> void:
 
 
 func test_host_to_client_message_comes_from_host_peer_id() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	host.transport.send(host.recorder.connected[0], Envelope.make("t", {"x": 1}))
 	var ok: bool = await pump(func() -> bool: return client.recorder.messages.size() >= 1)
@@ -107,7 +140,7 @@ func test_host_to_client_message_comes_from_host_peer_id() -> void:
 
 
 func test_broadcast_reaches_every_client() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var clients: Array[TransportRig] = []
 	for _i: int in 3:
 		clients.append(await join_client(host))
@@ -121,7 +154,7 @@ func test_broadcast_reaches_every_client() -> void:
 
 
 func test_peer_ids_are_unique() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	for _i: int in 3:
 		await join_client(host)
 	var seen: Dictionary = {}
@@ -132,7 +165,7 @@ func test_peer_ids_are_unique() -> void:
 
 
 func test_messages_keep_send_order() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	for i: int in 20:
 		client.transport.send(Transport.HOST_PEER_ID, Envelope.make("seq", {"i": i}))
@@ -143,7 +176,7 @@ func test_messages_keep_send_order() -> void:
 
 
 func test_receiver_gets_independent_copy() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	var msg: Dictionary = Envelope.make("t", {"list": [1, 2]})
 	client.transport.send(Transport.HOST_PEER_ID, msg)
@@ -154,14 +187,14 @@ func test_receiver_gets_independent_copy() -> void:
 
 
 func test_events_only_come_from_poll() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	client.transport.send(Transport.HOST_PEER_ID, Envelope.make("t"))
 	assert_eq(host.recorder.messages.size(), 0, "no delivery before poll")
 
 
 func test_client_leave_notifies_host() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	var peer_id: int = host.recorder.connected[0]
 	client.transport.leave()
@@ -172,7 +205,7 @@ func test_client_leave_notifies_host() -> void:
 
 
 func test_host_disconnect_peer_kicks_client() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	var peer_id: int = host.recorder.connected[0]
 	host.transport.disconnect_peer(peer_id)
@@ -183,7 +216,7 @@ func test_host_disconnect_peer_kicks_client() -> void:
 
 
 func test_host_leave_notifies_all_clients() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var c1: TransportRig = await join_client(host)
 	var c2: TransportRig = await join_client(host)
 	host.transport.leave()
@@ -194,7 +227,7 @@ func test_host_leave_notifies_all_clients() -> void:
 
 
 func test_rejoin_gets_new_peer_id() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var first: TransportRig = await join_client(host)
 	first.transport.leave()
 	await pump(func() -> bool: return host.recorder.disconnected.size() >= 1)
@@ -204,7 +237,7 @@ func test_rejoin_gets_new_peer_id() -> void:
 
 
 func test_send_to_unknown_peer_is_ignored() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	host.transport.send(9999, Envelope.make("t"))
 	client.transport.send(9999, Envelope.make("t"))
@@ -214,14 +247,14 @@ func test_send_to_unknown_peer_is_ignored() -> void:
 
 
 func test_leave_is_idempotent() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	host.transport.leave()
 	host.transport.leave()
 	assert_false(host.transport.is_active())
 
 
 func test_oversized_message_is_not_delivered() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var client: TransportRig = await join_client(host)
 	client.transport.send(Transport.HOST_PEER_ID, Envelope.make("big", {"s": "x".repeat(Protocol.MAX_MESSAGE_BYTES + 10)}))
 	await NetWait.frames(self, _transports(), 20)

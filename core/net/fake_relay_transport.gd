@@ -20,14 +20,10 @@ func _init(relay: FakeRelay) -> void:
 func host_session(config: Dictionary) -> Dictionary:
 	if _role != Role.NONE:
 		return CoreResult.failure("ALREADY_ACTIVE", "transport is already hosting or joined")
-	var conn_id: int = _relay.connect_outward()
-	var registered: Dictionary = _relay.register_room(conn_id, str(config.get("room_code", "")))
-	if not CoreResult.is_ok(registered):
-		_relay.disconnect_conn(conn_id)
-		return registered
-	_conn_id = conn_id
+	_conn_id = _relay.connect_outward()
 	_role = Role.HOST
-	return CoreResult.success({"address": registered["code"], "kind": "fake_relay"})
+	_relay.register_room(_conn_id, str(config.get("room_code", "")))
+	return CoreResult.success()  # the room code arrives later as session_ready
 
 
 func join_session(address_or_code: String, _config: Dictionary) -> void:
@@ -73,6 +69,11 @@ func poll() -> void:
 		if epoch != _epoch:
 			return
 		match event["kind"]:
+			"registered":
+				session_ready.emit({"address": event["code"], "kind": "fake_relay"})
+			"register_failed":
+				_release_and_reset()
+				host_failed.emit(event["reason"])
 			"join_ok":
 				_role = Role.CLIENT
 				_peers[HOST_PEER_ID] = true

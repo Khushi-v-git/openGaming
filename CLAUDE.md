@@ -62,7 +62,8 @@ docs/
    interface: `send(peer_id, message)`, `broadcast(message)`,
    `disconnect_peer(peer_id)`, `poll()` (the owner calls it every frame), and
    the signals `message_received`, `peer_connected`, `peer_disconnected`,
-   `join_succeeded`, `join_failed` (joining is asynchronous). On a client the
+   `join_succeeded`, `join_failed`, `session_ready`, `host_failed` (joining
+   and hosting are asynchronous). On a client the
    host is always `HOST_PEER_ID`. Game and lobby code must never
    reference a concrete socket, IP address or Godot RPC. Implementations
    (WebSocket/TCP for direct and tunnel use, a relay client later) are
@@ -70,10 +71,17 @@ docs/
 
 3a. **Relay-ready transport.** The transport interface is expressed as
     session operations, not socket operations:
-    - `host_session(config) -> session_info` (returns the address or room code
-      to share)
-    - `join_session(address_or_code, config)`
+    - `host_session(config)` starts hosting. It returns a failure only if
+      hosting could not even start (bad config, port in use); otherwise the
+      transport later emits exactly one of `session_ready(info)` (info has the
+      `address` or room code to share, and the transport `kind`) or
+      `host_failed(reason)`. A direct transport is ready at its next `poll()`;
+      a relay is ready once the relay has registered the room, which takes a
+      network round trip. UI shows a "starting" state with Cancel until then.
+    - `join_session(address_or_code, config)` (result via `join_succeeded` or
+      `join_failed`)
     - `leave()`, plus the send/broadcast/event methods from rule 3.
+    Events are only emitted from `poll()`.
     A direct implementation listens on a port. A relay implementation connects
     outbound to a relay and registers a room. Game, lobby and session code see
     no difference. Peers are identified by an opaque `peer_id` assigned by the
@@ -91,8 +99,13 @@ docs/
    (IP:port, hostname:port, or later a room code). Never hardcode hosts, ports
    or tunnel URLs. The host's listening port is a setting.
 
-6. **Version handshake.** On connect, peers exchange `app_version`, `game_id`
-   and `protocol_version`. In v1 all three must match exactly (loosening
+6. **Version handshake.** On connect, peers exchange `app_version` and
+   `protocol_version`, and the host answers with its `game_id`. Joiners do not
+   pick a game: `game_id` is optional in the client's hello (if sent, it must
+   match), and the host's welcome and every reject carry the host's `game_id`
+   and `app_version`. If the client's app has no such game it shows a clear
+   error (`UNKNOWN_GAME`) and leaves. In v1 `app_version` and
+   `protocol_version` must match exactly for live sessions (loosening
    `app_version` to major.minor is a later decision). Mismatches produce a
    clear in-app error with an error code, never undefined behavior.
 
@@ -102,7 +115,12 @@ docs/
    player without crashing or ending the game.
 
 8. **Serializable state.** Game state must be fully serializable to plain data
-   so any player can save a game, load it, and resume it as host.
+   so any player can save a game, load it, and resume it as host. A save has
+   its own `save_version`, independent of `app_version`, so app upgrades do
+   not orphan saves; there are no migrations yet, so a save with an unknown
+   `save_version` is refused with `UNSUPPORTED_SAVE`. A game's own state should
+   carry its own version number for the same reason. Saves contain rejoin
+   tokens and are private.
 
 9. **Hidden information stays on the host.** Hands, face-down choices and
    secret keys are never sent to players who must not see them. Send each

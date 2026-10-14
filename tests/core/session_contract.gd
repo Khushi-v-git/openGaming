@@ -10,10 +10,13 @@ func start_host(options: Dictionary = {}) -> HostRig:
 	rig.session = HostSession.new(env.make_transport(), APP, GAME, options)
 	rig.session.clock = clock.as_callable()
 	rig.recorder = HostRecorder.new(rig.session)
-	var info: Dictionary = rig.session.start(env.host_config())
-	assert_true(CoreResult.is_ok(info), "host start failed: %s" % str(info))
-	rig.address = str(info.get("address", ""))
+	var result: Dictionary = rig.session.start(env.host_config())
+	assert_true(CoreResult.is_ok(result), "host start failed: %s" % str(result))
 	track(rig.session, rig.session.transport)
+	var ok: bool = await pump(func() -> bool: return not rig.recorder.hosting.is_empty() or not rig.recorder.host_failures.is_empty())
+	assert_true(ok and rig.recorder.host_failures.is_empty(), "hosting never became ready")
+	if not rig.recorder.hosting.is_empty():
+		rig.address = str(rig.recorder.hosting[0].get("address", ""))
 	return rig
 
 
@@ -59,7 +62,7 @@ func wait_for_raw_reject(raw: TransportRig) -> bool:
 # --- success path ----------------------------------------------------------------
 
 func test_successful_handshake() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "Asha")
 	assert_eq(client.recorder.connected.size(), 1)
 	var welcome: Dictionary = client.recorder.connected[0]
@@ -73,13 +76,13 @@ func test_successful_handshake() -> void:
 
 
 func test_name_is_trimmed() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	await join_and_wait(host, "  Asha  ")
 	assert_eq(host.session.registry.name_of("p1"), "Asha")
 
 
 func test_each_player_gets_unique_id_and_token() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var a: ClientRig = await join_and_wait(host, "A")
 	var b: ClientRig = await join_and_wait(host, "B")
 	assert_ne(a.session.player_id, b.session.player_id)
@@ -87,7 +90,7 @@ func test_each_player_gets_unique_id_and_token() -> void:
 
 
 func test_welcome_extra_is_included() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	host.session.welcome_extra = func(player_id: String) -> Dictionary: return {"hello_to": player_id}
 	var client: ClientRig = await join_and_wait(host, "A")
 	assert_eq(client.recorder.connected[0]["hello_to"], "p1")
@@ -96,7 +99,7 @@ func test_welcome_extra_is_included() -> void:
 # --- version / game mismatches ----------------------------------------------------
 
 func test_protocol_mismatch_is_rejected_with_clear_code() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var raw: TransportRig = await raw_connect(host)
 	var hello: Dictionary = Handshake.hello(APP, GAME, "Zed")
 	hello["protocol_version"] = 999
@@ -108,7 +111,7 @@ func test_protocol_mismatch_is_rejected_with_clear_code() -> void:
 
 
 func test_app_version_mismatch_is_rejected() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "Zed", "2.0.0")
 	assert_eq(client.recorder.rejected.size(), 1)
 	assert_eq(client.recorder.rejected[0]["code"], ErrorCodes.APP_VERSION_MISMATCH)
@@ -118,7 +121,7 @@ func test_app_version_mismatch_is_rejected() -> void:
 
 
 func test_wrong_game_is_rejected() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "Zed", APP, "other_game")
 	assert_eq(client.recorder.rejected[0]["code"], ErrorCodes.WRONG_GAME)
 	assert_string_contains(client.recorder.rejected[0]["message"], GAME)
@@ -126,7 +129,7 @@ func test_wrong_game_is_rejected() -> void:
 
 
 func test_protocol_is_checked_before_game_and_version() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var raw: TransportRig = await raw_connect(host)
 	var hello: Dictionary = Handshake.hello("9.9.9", "other_game", "Zed")
 	hello["protocol_version"] = 2
@@ -136,7 +139,7 @@ func test_protocol_is_checked_before_game_and_version() -> void:
 
 
 func test_invalid_names_are_rejected() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	for bad: String in ["", "   ", "x".repeat(Handshake.MAX_NAME_LENGTH + 1), "bad\nname"]:
 		var client: ClientRig = await join_and_wait(host, bad)
 		assert_eq(client.recorder.rejected.size(), 1, "name '%s'" % bad.c_escape())
@@ -144,7 +147,7 @@ func test_invalid_names_are_rejected() -> void:
 
 
 func test_malformed_hello_is_rejected() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var raw: TransportRig = await raw_connect(host)
 	raw.transport.send(Transport.HOST_PEER_ID, Envelope.make(Protocol.T_HELLO, {"player_name": "x"}))
 	assert_true(await wait_for_raw_reject(raw))
@@ -152,7 +155,7 @@ func test_malformed_hello_is_rejected() -> void:
 
 
 func test_first_message_must_be_hello() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var raw: TransportRig = await raw_connect(host)
 	raw.transport.send(Transport.HOST_PEER_ID, Envelope.make(Protocol.T_GAME_ACTION, {"action": "roll"}))
 	assert_true(await wait_for_raw_reject(raw))
@@ -161,7 +164,7 @@ func test_first_message_must_be_hello() -> void:
 
 
 func test_rejected_peer_is_disconnected() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "Zed", "2.0.0")
 	assert_false(client.session.is_active())
 	assert_false(client.session.transport.is_active())
@@ -170,7 +173,7 @@ func test_rejected_peer_is_disconnected() -> void:
 
 
 func test_unknown_rejoin_identity_is_rejected() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = ClientRig.new()
 	client.session = ClientSession.new(env.make_transport(), APP, GAME)
 	client.recorder = ClientRecorder.new(client.session)
@@ -184,7 +187,7 @@ func test_unknown_rejoin_identity_is_rejected() -> void:
 # --- admission hook ---------------------------------------------------------------
 
 func test_admission_policy_can_refuse() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	host.session.admission_policy = func(_name: String) -> Dictionary: return CoreResult.failure(ErrorCodes.ROOM_FULL, "Room is full.")
 	var client: ClientRig = await join_and_wait(host, "Late")
 	assert_eq(client.recorder.rejected[0]["code"], ErrorCodes.ROOM_FULL)
@@ -194,7 +197,7 @@ func test_admission_policy_can_refuse() -> void:
 # --- connection failures ----------------------------------------------------------
 
 func test_connect_to_nothing_reports_connect_failed() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	host.address = "127.0.0.1:1" if env.host_config().has("port") else "no-such-room"
 	var client: ClientRig = await join_and_wait(host, "Zed")
 	assert_eq(client.recorder.connect_failed.size(), 1)
@@ -203,7 +206,7 @@ func test_connect_to_nothing_reports_connect_failed() -> void:
 # --- limits and liveness ----------------------------------------------------------
 
 func test_handshake_timeout() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var raw: TransportRig = await raw_connect(host)
 	await frames(3)
 	clock.now += 6000
@@ -212,7 +215,7 @@ func test_handshake_timeout() -> void:
 
 
 func test_pending_handshake_limit() -> void:
-	var host: HostRig = start_host({"max_pending_handshakes": 2})
+	var host: HostRig = await start_host({"max_pending_handshakes": 2})
 	var first: TransportRig = await raw_connect(host)
 	var second: TransportRig = await raw_connect(host)
 	var third: TransportRig = await raw_connect(host)
@@ -223,7 +226,7 @@ func test_pending_handshake_limit() -> void:
 
 
 func test_pending_slot_is_freed_after_handshake() -> void:
-	var host: HostRig = start_host({"max_pending_handshakes": 1})
+	var host: HostRig = await start_host({"max_pending_handshakes": 1})
 	var client: ClientRig = await join_and_wait(host, "A")
 	assert_eq(client.recorder.connected.size(), 1)
 	var second: ClientRig = await join_and_wait(host, "B")
@@ -231,7 +234,7 @@ func test_pending_slot_is_freed_after_handshake() -> void:
 
 
 func test_flooding_player_is_kicked_with_rate_limited() -> void:
-	var host: HostRig = start_host({"rate_burst": 5, "rate_per_sec": 1, "max_rate_violations": 3})
+	var host: HostRig = await start_host({"rate_burst": 5, "rate_per_sec": 1, "max_rate_violations": 3})
 	var client: ClientRig = await join_and_wait(host, "Flood")
 	for i: int in 30:
 		client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"i": i}))
@@ -243,7 +246,7 @@ func test_flooding_player_is_kicked_with_rate_limited() -> void:
 
 
 func test_normal_traffic_is_not_rate_limited() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "Calm")
 	for i: int in 10:
 		client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"i": i}))
@@ -254,7 +257,7 @@ func test_normal_traffic_is_not_rate_limited() -> void:
 
 
 func test_silent_client_is_dropped_after_ping_timeout() -> void:
-	var host: HostRig = start_host({"ping_interval_msec": 1000, "ping_timeout_msec": 4000})
+	var host: HostRig = await start_host({"ping_interval_msec": 1000, "ping_timeout_msec": 4000})
 	var client: ClientRig = await join_and_wait(host, "Ghost")
 	_pollers.erase(client.session)  # the client app froze: it never answers pings
 	var ok: bool = await pump(func() -> bool:
@@ -265,7 +268,7 @@ func test_silent_client_is_dropped_after_ping_timeout() -> void:
 
 
 func test_ping_pong_keeps_a_healthy_connection_alive() -> void:
-	var host: HostRig = start_host({"ping_interval_msec": 1000, "ping_timeout_msec": 4000})
+	var host: HostRig = await start_host({"ping_interval_msec": 1000, "ping_timeout_msec": 4000})
 	var client: ClientRig = await join_and_wait(host, "Alive", APP, GAME, {"host_silence_timeout_msec": 4000})
 	for _i: int in 60:
 		clock.now += 500
@@ -276,7 +279,7 @@ func test_ping_pong_keeps_a_healthy_connection_alive() -> void:
 
 
 func test_client_detects_a_silent_host() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "Watcher", APP, GAME, {"host_silence_timeout_msec": 3000})
 	_pollers.erase(host.session)  # host app froze
 	var ok: bool = await pump(func() -> bool:
@@ -288,7 +291,7 @@ func test_client_detects_a_silent_host() -> void:
 # --- routing ---------------------------------------------------------------------
 
 func test_messages_reach_host_tagged_with_player_id() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var a: ClientRig = await join_and_wait(host, "A")
 	var b: ClientRig = await join_and_wait(host, "B")
 	b.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "roll"}))
@@ -300,7 +303,7 @@ func test_messages_reach_host_tagged_with_player_id() -> void:
 
 
 func test_host_can_send_to_one_player_or_broadcast() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var a: ClientRig = await join_and_wait(host, "A")
 	var b: ClientRig = await join_and_wait(host, "B")
 	host.session.send_to_player(a.session.player_id, Envelope.make(Protocol.T_GAME_STATE, {"for": "a"}))
@@ -313,7 +316,7 @@ func test_host_can_send_to_one_player_or_broadcast() -> void:
 
 
 func test_liveness_messages_are_not_forwarded_to_game_code() -> void:
-	var host: HostRig = start_host({"ping_interval_msec": 500})
+	var host: HostRig = await start_host({"ping_interval_msec": 500})
 	var client: ClientRig = await join_and_wait(host, "A")
 	for _i: int in 10:
 		clock.now += 600
@@ -323,7 +326,7 @@ func test_liveness_messages_are_not_forwarded_to_game_code() -> void:
 
 
 func test_second_hello_after_welcome_is_refused() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "A")
 	client.session.send(Handshake.hello(APP, GAME, "A"))
 	var ok: bool = await pump(func() -> bool: return client.recorder.ended.size() >= 1)
@@ -332,7 +335,7 @@ func test_second_hello_after_welcome_is_refused() -> void:
 
 
 func test_kick_player_tells_them_why() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "A")
 	host.session.kick_player("p1", ErrorCodes.KICKED, "Removed by host")
 	var ok: bool = await pump(func() -> bool: return client.recorder.ended.size() >= 1 and host.recorder.left.size() >= 1)
@@ -344,7 +347,7 @@ func test_kick_player_tells_them_why() -> void:
 # --- ending ----------------------------------------------------------------------
 
 func test_host_close_tells_clients_the_session_ended() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "A")
 	host.session.close("Game over, thanks")
 	var ok: bool = await pump(func() -> bool: return host.session.is_closed())
@@ -357,7 +360,7 @@ func test_host_close_tells_clients_the_session_ended() -> void:
 
 
 func test_close_gives_up_waiting_after_grace_period() -> void:
-	var host: HostRig = start_host({"close_grace_msec": 2000})
+	var host: HostRig = await start_host({"close_grace_msec": 2000})
 	var client: ClientRig = await join_and_wait(host, "Stuck")
 	_pollers.erase(client.session)  # never reads the goodbye, never leaves
 	host.session.close()
@@ -369,7 +372,7 @@ func test_close_gives_up_waiting_after_grace_period() -> void:
 
 
 func test_close_now_is_immediate() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	await join_and_wait(host, "A")
 	host.session.close_now()
 	assert_true(host.session.is_closed())
@@ -377,7 +380,7 @@ func test_close_now_is_immediate() -> void:
 
 
 func test_joins_during_shutdown_are_refused() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var first: ClientRig = await join_and_wait(host, "A")
 	_pollers.erase(first.session)  # keeps the host from finishing right away
 	host.session.close()
@@ -386,7 +389,7 @@ func test_joins_during_shutdown_are_refused() -> void:
 
 
 func test_host_vanishing_is_reported_as_host_lost() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "A")
 	host.session.transport.leave()
 	var ok: bool = await pump(func() -> bool: return client.recorder.host_lost.size() >= 1)
@@ -395,7 +398,7 @@ func test_host_vanishing_is_reported_as_host_lost() -> void:
 
 
 func test_client_leaving_is_reported_to_host() -> void:
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "A")
 	client.session.leave()
 	var ok: bool = await pump(func() -> bool: return host.recorder.left.size() >= 1)
@@ -409,7 +412,7 @@ func test_every_message_is_logged_with_type_and_player() -> void:
 	var lines: Array[String] = []
 	MessageLog.sink = func(line: String) -> void: lines.append(line)
 	MessageLog.enabled = true
-	var host: HostRig = start_host()
+	var host: HostRig = await start_host()
 	var client: ClientRig = await join_and_wait(host, "A")
 	client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "roll"}))
 	await pump(func() -> bool: return host.recorder.messages.size() >= 1)
@@ -421,3 +424,61 @@ func test_every_message_is_logged_with_type_and_player() -> void:
 	assert_string_contains(joined, "<- player=p1")
 	assert_string_contains(joined, "type=game_action")
 	assert_false(joined.contains(client.session.rejoin_token), "tokens must never be logged")
+
+
+# --- game_id is optional; the host always says what it runs ----------------------
+
+func test_joiner_without_a_game_id_plays_whatever_the_host_runs() -> void:
+	var host: HostRig = await start_host()
+	var client: ClientRig = await join_and_wait(host, "Asha", APP, "")
+	assert_eq(client.recorder.connected.size(), 1)
+	assert_eq(client.recorder.connected[0]["game_id"], GAME)
+	assert_eq(client.recorder.connected[0]["app_version"], APP)
+	assert_eq(client.session.host_game_id, GAME)
+	assert_eq(client.session.host_app_version, APP)
+
+
+func test_every_reject_tells_the_client_what_the_host_runs() -> void:
+	var host: HostRig = await start_host()
+	host.session.admission_policy = func(player_name: String) -> Dictionary:
+		return CoreResult.failure(ErrorCodes.ROOM_FULL, "Full.") if player_name == "Late" else CoreResult.success()
+	var expected: Dictionary = {"game_id": GAME, "app_version": APP}
+	var wrong_version: ClientRig = await join_and_wait(host, "A", "2.0.0", "")
+	assert_eq(wrong_version.recorder.rejected[0]["code"], ErrorCodes.APP_VERSION_MISMATCH)
+	assert_eq(wrong_version.recorder.rejected[0]["host_info"], expected)
+	var wrong_game: ClientRig = await join_and_wait(host, "B", APP, "other_game")
+	assert_eq(wrong_game.recorder.rejected[0]["code"], ErrorCodes.WRONG_GAME)
+	assert_eq(wrong_game.recorder.rejected[0]["host_info"], expected)
+	var bad_name: ClientRig = await join_and_wait(host, "  ", APP, "")
+	assert_eq(bad_name.recorder.rejected[0]["code"], ErrorCodes.NAME_INVALID)
+	assert_eq(bad_name.recorder.rejected[0]["host_info"], expected)
+	var full: ClientRig = await join_and_wait(host, "Late", APP, "")
+	assert_eq(full.recorder.rejected[0]["code"], ErrorCodes.ROOM_FULL)
+	assert_eq(full.recorder.rejected[0]["host_info"], expected)
+	assert_eq(full.session.host_game_id, GAME)
+
+
+func test_protocol_mismatch_and_other_refusals_also_carry_host_info() -> void:
+	var host: HostRig = await start_host()
+	var raw: TransportRig = await raw_connect(host)
+	var hello: Dictionary = Handshake.hello(APP, "", "Zed")
+	hello["protocol_version"] = 999
+	raw.transport.send(Transport.HOST_PEER_ID, hello)
+	assert_true(await wait_for_raw_reject(raw))
+	var payload: Dictionary = raw.recorder.messages_of_type(Protocol.T_REJECT)[0]["message"]["payload"]
+	assert_eq(payload["game_id"], GAME)
+	assert_eq(payload["app_version"], APP)
+
+
+func test_app_version_is_still_an_exact_match_without_a_game_id() -> void:
+	var host: HostRig = await start_host()
+	var client: ClientRig = await join_and_wait(host, "Zed", "1.0.1", "")
+	assert_eq(client.recorder.rejected[0]["code"], ErrorCodes.APP_VERSION_MISMATCH)
+	assert_eq(host.recorder.joined.size(), 0)
+
+
+func test_hosting_signal_reports_the_address() -> void:
+	var host: HostRig = await start_host()
+	assert_eq(host.recorder.hosting.size(), 1)
+	assert_eq(host.recorder.hosting[0]["address"], host.address)
+	assert_eq(host.recorder.host_failures.size(), 0)

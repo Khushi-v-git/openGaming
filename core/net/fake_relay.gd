@@ -33,20 +33,24 @@ func release(conn_id: int) -> void:
 	_conns.erase(conn_id)
 
 
-func register_room(conn_id: int, requested_code: String = "") -> Dictionary:
+## Asks the relay to open a room. The answer ("registered" with the code, or
+## "register_failed") arrives in the connection's event queue, like any relay reply.
+func register_room(conn_id: int, requested_code: String = "") -> void:
 	var conn: Dictionary = _conns.get(conn_id, {})
 	if conn.is_empty() or conn["room"] != "":
-		return CoreResult.failure("BAD_CONNECTION", "connection cannot register a room")
+		_push(conn_id, {"kind": "register_failed", "reason": "connection cannot register a room"})
+		return
 	var code: String = requested_code
 	if code.is_empty():
 		_room_counter += 1
 		code = "ROOM-%04d" % _room_counter
 	if _rooms.has(code):
-		return CoreResult.failure("ROOM_EXISTS", "room code %s is taken" % code)
+		_push(conn_id, {"kind": "register_failed", "reason": "room code %s is taken" % code})
+		return
 	_rooms[code] = {"host": conn_id, "clients": {}, "next_peer": Transport.HOST_PEER_ID + 1}
 	conn["room"] = code
 	conn["is_host"] = true
-	return CoreResult.success({"code": code})
+	_push(conn_id, {"kind": "registered", "code": code})
 
 
 ## Queues join_ok / join_failed for the joiner and connected for the host.

@@ -38,9 +38,15 @@ func _until(condition: Callable, max_frames: int = 600) -> bool:
 	return false
 
 
+## Presses Host and waits until hosting is live (the address arrives asynchronously).
+func _start_hosting(scene: LobbyScene) -> void:
+	scene.host_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return scene.lobby_view.visible and scene.shared_address != ""), "hosting never went live")
+
+
 func _host_and_guest() -> Array[LobbyScene]:
 	var host: LobbyScene = _make_scene("Hosty")
-	host.host_button.pressed.emit()
+	await _start_hosting(host)
 	var guest: LobbyScene = _make_scene("Asha")
 	guest.address_edit.text = host.shared_address
 	guest.join_button.pressed.emit()
@@ -87,7 +93,7 @@ func test_joining_needs_an_address() -> void:
 
 func test_host_sees_lobby_with_shareable_address() -> void:
 	var host: LobbyScene = _make_scene("Hosty")
-	host.host_button.pressed.emit()
+	await _start_hosting(host)
 	assert_true(host.lobby_view.visible)
 	assert_false(host.start_view.visible)
 	assert_ne(host.shared_address, "")
@@ -137,7 +143,7 @@ func test_unknown_address_returns_to_start_with_a_message() -> void:
 
 func test_full_room_message_is_shown_to_the_joiner() -> void:
 	var host: LobbyScene = _make_scene("Hosty", {"max_players": 2})
-	host.host_button.pressed.emit()
+	await _start_hosting(host)
 	var first: LobbyScene = _make_scene("Asha")
 	first.address_edit.text = host.shared_address
 	first.join_button.pressed.emit()
@@ -207,3 +213,253 @@ func test_rejoin_button_is_hidden_after_being_removed_by_the_host() -> void:
 	(host.players_box.get_child(1).get_child(2) as Button).pressed.emit()
 	assert_true(await _until(func() -> bool: return guest.start_view.visible))
 	assert_false(guest.rejoin_button.visible)
+
+
+# --- connecting state and Cancel --------------------------------------------------
+
+func _relay_scene(relay: FakeRelay, player_name: String, extra: Dictionary = {}) -> LobbyScene:
+	var options: Dictionary = {"transport": {"transport": "fake_relay", "relay": relay}}
+	options.merge(extra, true)
+	return _make_scene(player_name, options)
+
+
+func test_joining_shows_connecting_with_cancel_until_the_host_answers() -> void:
+	var relay: FakeRelay = FakeRelay.new()
+	var host: LobbyScene = _relay_scene(relay, "Hosty")
+	await _start_hosting(host)
+	relay.delay_polls = 40  # a slow network
+	var guest: LobbyScene = _relay_scene(relay, "Asha")
+	guest.address_edit.text = host.shared_address
+	guest.join_button.pressed.emit()
+	assert_true(guest.connecting_view.visible)
+	assert_false(guest.start_view.visible)
+	assert_false(guest.lobby_view.visible)
+	assert_string_contains(guest.connecting_label.text, host.shared_address)
+	assert_true(guest.cancel_button.visible)
+	await get_tree().process_frame
+	assert_true(guest.connecting_view.visible, "still connecting")
+	assert_true(await _until(func() -> bool: return guest.lobby_view.visible, 2000))
+	assert_false(guest.connecting_view.visible)
+
+
+func test_cancel_while_connecting_returns_to_start_and_nobody_sees_a_ghost() -> void:
+	var relay: FakeRelay = FakeRelay.new()
+	var host: LobbyScene = _relay_scene(relay, "Hosty")
+	await _start_hosting(host)
+	relay.delay_polls = 40
+	var guest: LobbyScene = _relay_scene(relay, "Asha")
+	guest.address_edit.text = host.shared_address
+	guest.join_button.pressed.emit()
+	await get_tree().process_frame
+	guest.cancel_button.pressed.emit()
+	assert_true(guest.start_view.visible)
+	assert_false(guest.connecting_view.visible)
+	assert_eq(guest.status_label.text, "", "cancelling is not an error")
+	assert_false(guest.join_button.disabled)
+	relay.delay_polls = 0
+	for _i: int in 90:
+		await get_tree().process_frame
+	assert_eq(host.players_box.get_child_count(), 1, "the host never saw the cancelled joiner stay")
+	assert_true(guest.start_view.visible, "a late reply does not drag the guest back in")
+
+
+func test_joining_can_be_tried_again_after_cancelling() -> void:
+	var relay: FakeRelay = FakeRelay.new()
+	var host: LobbyScene = _relay_scene(relay, "Hosty")
+	await _start_hosting(host)
+	var guest: LobbyScene = _relay_scene(relay, "Asha")
+	guest.address_edit.text = host.shared_address
+	guest.join_button.pressed.emit()
+	guest.cancel_button.pressed.emit()
+	guest.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return guest.lobby_view.visible and host.players_box.get_child_count() == 2))
+
+
+func test_hosting_shows_starting_with_cancel_while_the_relay_answers() -> void:
+	var relay: FakeRelay = FakeRelay.new()
+	relay.delay_polls = 40
+	var host: LobbyScene = _relay_scene(relay, "Hosty")
+	host.host_button.pressed.emit()
+	assert_true(host.connecting_view.visible)
+	assert_string_contains(host.connecting_label.text, "Starting")
+	await get_tree().process_frame
+	assert_true(host.connecting_view.visible, "relay has not answered yet")
+	assert_true(await _until(func() -> bool: return host.lobby_view.visible, 2000))
+	assert_ne(host.shared_address, "")
+
+
+func test_cancel_while_starting_to_host_frees_everything() -> void:
+	var relay: FakeRelay = FakeRelay.new()
+	relay.delay_polls = 40
+	var host: LobbyScene = _relay_scene(relay, "Hosty")
+	host.host_button.pressed.emit()
+	await get_tree().process_frame
+	host.cancel_button.pressed.emit()
+	assert_true(host.start_view.visible)
+	assert_eq(relay.get_room_codes().size(), 0, "the room was given back")
+	assert_false(host.host_button.disabled)
+	for _i: int in 90:
+		await get_tree().process_frame
+	assert_true(host.start_view.visible, "a late registration does not bring the lobby back")
+
+
+func test_a_host_that_cannot_start_returns_to_start_with_a_message() -> void:
+	var relay: FakeRelay = FakeRelay.new()
+	var first: LobbyScene = _relay_scene(relay, "Hosty", {"transport": {"transport": "fake_relay", "relay": relay, "room_code": "TAKEN"}})
+	await _start_hosting(first)
+	var second: LobbyScene = _relay_scene(relay, "Other", {"transport": {"transport": "fake_relay", "relay": relay, "room_code": "TAKEN"}})
+	second.host_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return second.start_view.visible and second.status_label.text.begins_with("Could not host")))
+	assert_string_contains(second.status_label.text, "taken")
+	assert_false(second.host_button.disabled)
+
+
+func test_a_host_that_fails_to_listen_says_so() -> void:
+	var taken: DirectWsTransport = DirectWsTransport.new()
+	assert_true(CoreResult.is_ok(taken.host_session({"port": 0, "bind_address": "127.0.0.1"})))
+	var config: Dictionary = {"transport": "direct_ws", "port": taken.listening_port(), "bind_address": "127.0.0.1"}
+	var scene: LobbyScene = _make_scene("Hosty", {"transport": config})
+	scene.host_button.pressed.emit()
+	assert_true(scene.start_view.visible)
+	assert_string_contains(scene.status_label.text, "Could not host")
+	taken.leave()
+
+
+# --- games the app does not have --------------------------------------------------
+
+func _registry() -> GameRegistry:
+	var registry: GameRegistry = GameRegistry.new()
+	registry.load_from("res://tests/fixtures/games")
+	return registry
+
+
+func test_joiner_whose_app_lacks_the_hosts_game_sees_a_clear_error() -> void:
+	var host: LobbyScene = _make_scene("Hosty", {"game_id": "some_game_only_the_host_has"})
+	await _start_hosting(host)
+	var guest: LobbyScene = _make_scene("Asha", {"game_registry": _registry()})
+	guest.address_edit.text = host.shared_address
+	guest.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return guest.start_view.visible and guest.status_label.text != ""))
+	assert_string_contains(guest.status_label.text, "some_game_only_the_host_has")
+	assert_string_contains(guest.status_label.text, "does not have")
+	assert_true(await _until(func() -> bool: return host.players_box.get_child_count() == 1), "the host is not left with a ghost")
+
+
+func test_joiner_whose_app_has_the_game_joins_and_sees_its_name() -> void:
+	var registry: GameRegistry = _registry()
+	var host: LobbyScene = _make_scene("Hosty", {"game_id": "alpha", "game_registry": registry})
+	await _start_hosting(host)
+	assert_eq(host.title_label.text, "Zebra Race")
+	var guest: LobbyScene = _make_scene("Asha", {"game_registry": registry})
+	guest.address_edit.text = host.shared_address
+	guest.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return guest.lobby_view.visible and guest.players_box.get_child_count() == 2))
+	assert_eq(guest.title_label.text, "Zebra Race", "the joiner never chose a game; it follows the host")
+
+
+func test_player_limits_come_from_the_manifest_when_a_registry_is_given() -> void:
+	var registry: GameRegistry = _registry()
+	var host: LobbyScene = _make_scene("Hosty", {"game_id": "beta", "game_registry": registry, "min_players": 3, "max_players": 4})
+	await _start_hosting(host)
+	assert_eq(host._host.state["min_players"], 1)
+	assert_eq(host._host.state["max_players"], 2)
+
+
+# --- layout -----------------------------------------------------------------------
+
+func _in_viewport(size: Vector2i, player_name: String = "Hosty") -> Array:
+	var viewport: SubViewport = SubViewport.new()
+	viewport.size = size
+	viewport.disable_3d = true
+	add_child_autofree(viewport)
+	var scene: LobbyScene = LobbyScene.new()
+	scene.setup({
+		"game_id": "test_game", "game_title": "Test Game", "app_version": "1.0.0",
+		"min_players": 2, "max_players": 4,
+		"transport": {"transport": "loopback", "hub": hub}, "player_name": player_name,
+	})
+	viewport.add_child(scene)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	return [viewport, scene]
+
+
+func _assert_fits(viewport: SubViewport, scene: LobbyScene, label: String) -> void:
+	var window: Rect2 = Rect2(Vector2.ZERO, Vector2(viewport.size))
+	var rect: Rect2 = scene.panel.get_global_rect()
+	assert_true(window.encloses(rect), "%s: panel %s must fit inside %s" % [label, str(rect), str(window)])
+	assert_gte(rect.position.x, 8.0, "%s: left margin" % label)
+	assert_gte(rect.position.y, 8.0, "%s: top margin" % label)
+	var centered_x: float = absf((rect.position.x + rect.size.x * 0.5) - window.size.x * 0.5)
+	var centered_y: float = absf((rect.position.y + rect.size.y * 0.5) - window.size.y * 0.5)
+	assert_lt(centered_x, 2.0, "%s: horizontally centered" % label)
+	assert_lt(centered_y, 2.0, "%s: vertically centered" % label)
+	assert_eq(scene.size, Vector2(viewport.size), "%s: scene fills the window" % label)
+
+
+func _fill_lobby(scene: LobbyScene) -> void:
+	scene.host_button.pressed.emit()
+	await _until(func() -> bool: return scene.lobby_view.visible)
+
+
+func test_layout_fits_at_1280x720_and_1920x1080() -> void:
+	for dims: Vector2i in [Vector2i(1280, 720), Vector2i(1920, 1080)]:
+		var made: Array = await _in_viewport(dims)
+		var viewport: SubViewport = made[0]
+		var scene: LobbyScene = made[1]
+		_assert_fits(viewport, scene, "start view %s" % str(dims))
+		await _fill_lobby(scene)
+		await get_tree().process_frame
+		_assert_fits(viewport, scene, "lobby view %s" % str(dims))
+
+
+func test_full_lobby_with_long_names_still_fits_at_1280x720() -> void:
+	var made: Array = await _in_viewport(Vector2i(1280, 720), "H".repeat(Handshake.MAX_NAME_LENGTH))
+	var viewport: SubViewport = made[0]
+	var host: LobbyScene = made[1]
+	await _fill_lobby(host)
+	for i: int in 3:
+		var guest: LobbyScene = _make_scene("G".repeat(Handshake.MAX_NAME_LENGTH - 1) + str(i))
+		guest.address_edit.text = host.shared_address
+		guest.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return host.players_box.get_child_count() == 4))
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert_fits(viewport, host, "full lobby")
+
+
+func test_panel_grows_with_the_window_but_stays_within_bounds() -> void:
+	var small: Array = await _in_viewport(Vector2i(1280, 720))
+	var large: Array = await _in_viewport(Vector2i(1920, 1080))
+	var small_w: float = (small[1] as LobbyScene).panel.size.x
+	var large_w: float = (large[1] as LobbyScene).panel.size.x
+	assert_gt(large_w, small_w)
+	assert_lte(large_w, 760.0 + 2.0 * Tokens.SPACE_L + 1.0)
+
+
+func test_layout_follows_a_window_resize_in_both_directions() -> void:
+	var made: Array = await _in_viewport(Vector2i(1920, 1080))
+	var viewport: SubViewport = made[0]
+	var scene: LobbyScene = made[1]
+	await _fill_lobby(scene)
+	var widths: Array[float] = []
+	for dims: Vector2i in [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1000, 600), Vector2i(1920, 1080), Vector2i(1280, 720)]:
+		viewport.size = dims
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_assert_fits(viewport, scene, "after resizing to %s" % str(dims))
+		widths.append(scene.panel.size.x)
+	assert_gt(widths[0], 0.0)
+	assert_eq(widths[0], widths[4], "returning to the same size gives the same layout")
+	assert_gt(widths[3], widths[0])
+
+
+func test_connecting_view_also_fits() -> void:
+	var made: Array = await _in_viewport(Vector2i(1280, 720))
+	var viewport: SubViewport = made[0]
+	var scene: LobbyScene = made[1]
+	scene.address_edit.text = "no-such-session"
+	scene.join_button.pressed.emit()
+	assert_true(scene.connecting_view.visible)
+	await get_tree().process_frame
+	_assert_fits(viewport, scene, "connecting view")

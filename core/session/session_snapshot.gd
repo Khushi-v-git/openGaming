@@ -10,11 +10,16 @@ extends RefCounted
 ## everyone has come back.)
 ##
 ## Shape:
-##   {snapshot_version, app_version, game_id, saved_at,
+##   {save_version, saved_by_app_version, game_id, saved_at,
 ##    lobby: {...LobbyLogic state...}, players: PlayerRegistry.to_dict(), game_state: {...}}
-## A save only loads into the same game_id and the same app_version (v1: exact match).
+##
+## `save_version` is the version of this file format and is independent of the app
+## version, so upgrading the app does not orphan saves. A save loads if it has the same
+## game_id and a save_version this code understands. There are no migrations yet: a save
+## from a newer or older format is refused with UNSUPPORTED_SAVE. The game's own
+## `game_state` should carry its own version number for the same reason.
 
-const VERSION: int = 1
+const SAVE_VERSION: int = 1
 const FILE_NOT_FOUND: String = "FILE_NOT_FOUND"
 const FILE_ERROR: String = "FILE_ERROR"
 const _PHASES: Array[String] = [LobbyLogic.PHASE_OPEN, LobbyLogic.PHASE_IN_GAME]
@@ -22,8 +27,8 @@ const _PHASES: Array[String] = [LobbyLogic.PHASE_OPEN, LobbyLogic.PHASE_IN_GAME]
 
 static func capture(app_version: String, game_id: String, lobby_state: Dictionary, registry: PlayerRegistry, game_state: Dictionary = {}) -> Dictionary:
 	return {
-		"snapshot_version": VERSION,
-		"app_version": app_version,
+		"save_version": SAVE_VERSION,
+		"saved_by_app_version": app_version,
 		"game_id": game_id,
 		"saved_at": int(Time.get_unix_time_from_system()),
 		"lobby": lobby_state.duplicate(true),
@@ -81,23 +86,29 @@ static func load_file(path: String) -> Dictionary:
 	return from_text(file.get_as_text())
 
 
-## Full check before loading: structure, then game and version.
-static func validate(snapshot: Dictionary, app_version: String, game_id: String) -> Dictionary:
+## Full check before loading: format version, structure, then game. The app version
+## is deliberately not compared (see save_version).
+static func validate(snapshot: Dictionary, game_id: String) -> Dictionary:
+	var version: Variant = snapshot.get("save_version")
+	if typeof(version) == TYPE_INT and version != SAVE_VERSION:
+		if version > SAVE_VERSION:
+			return CoreResult.failure(ErrorCodes.UNSUPPORTED_SAVE, "This save was made by a newer version of the app (save format %d, this app reads %d)." % [version, SAVE_VERSION])
+		return CoreResult.failure(ErrorCodes.UNSUPPORTED_SAVE, "This save uses an old format (%d) and there is no converter yet." % version)
 	var structure: Dictionary = validate_structure(snapshot)
 	if not CoreResult.is_ok(structure):
 		return structure
 	if snapshot["game_id"] != game_id:
 		return CoreResult.failure(ErrorCodes.WRONG_GAME, "This save is for '%s', not '%s'." % [snapshot["game_id"], game_id])
-	if snapshot["app_version"] != app_version:
-		return CoreResult.failure(ErrorCodes.APP_VERSION_MISMATCH, "This save was made with app version %s but this is %s." % [snapshot["app_version"], app_version])
 	return CoreResult.success()
 
 
 ## Shape and internal consistency only (no game/version comparison).
 static func validate_structure(snapshot: Dictionary) -> Dictionary:
-	if snapshot.get("snapshot_version") != VERSION:
+	if typeof(snapshot.get("save_version")) != TYPE_INT:
+		return _bad("Missing 'save_version'.")
+	if snapshot["save_version"] != SAVE_VERSION:
 		return _bad("Unsupported save format version.")
-	for field: String in ["app_version", "game_id"]:
+	for field: String in ["saved_by_app_version", "game_id"]:
 		if typeof(snapshot.get(field)) != TYPE_STRING:
 			return _bad("Missing '%s'." % field)
 	for field: String in ["lobby", "players", "game_state"]:

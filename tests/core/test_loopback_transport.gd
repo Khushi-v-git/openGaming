@@ -6,7 +6,7 @@ func make_env() -> TransportEnv:
 
 
 func test_two_hubs_are_isolated() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var other: Transport = LoopbackTransport.new(LoopbackHub.new())
 	var rec: TransportRecorder = TransportRecorder.new(other)
 	other.join_session(host.address, {})

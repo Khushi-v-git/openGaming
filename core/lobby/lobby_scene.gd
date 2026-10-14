@@ -5,17 +5,27 @@ extends Control
 ## LobbyHost (rules 1 and 12). It only knows the Transport interface: the concrete
 ## transport comes from TransportFactory according to options.transport.
 ##
+## Three views: start (host / join / rejoin), connecting (with Cancel; also shown while
+## a host session is being set up, which a relay may take a moment to do) and lobby.
+##
 ## Usage: var scene := LobbyScene.new(); scene.setup({...}); add_child(scene)
-## options: game_id, game_title, app_version, min_players, max_players,
-##          transport (config Dictionary, default TransportFactory.default_config()),
-##          player_name (optional prefill)
+## options:
+##   app_version                 required
+##   game_id                     the game to host (hosting only; joiners play the host's game)
+##   min_players, max_players    for hosting; default from the game's manifest if a registry is given
+##   game_registry               optional GameRegistry: used for display names, player limits
+##                               and to tell a joiner clearly when this app lacks the host's game
+##   game_title                  optional title when there is no registry
+##   join_game_id                optional: insist on this game when joining (normally unset)
+##   transport                   config Dictionary, default TransportFactory.default_config()
+##   player_name                 optional prefill
 
 signal game_started(state: Dictionary)
-signal closed()  # the player left the lobby screen entirely (back to the menu)
 
 var options: Dictionary = {}
 
 # Widgets are public so tests can drive them like a user would.
+var title_label: Label
 var name_edit: LineEdit
 var port_spin: SpinBox
 var address_edit: LineEdit
@@ -24,6 +34,9 @@ var join_button: Button
 var rejoin_button: Button
 var status_label: Label
 var start_view: Control
+var connecting_view: Control
+var connecting_label: Label
+var cancel_button: Button
 var lobby_view: Control
 var address_label: Label
 var copy_button: Button
@@ -32,6 +45,7 @@ var ready_button: CheckButton
 var start_button: Button
 var leave_button: Button
 var lobby_status_label: Label
+var panel: PanelContainer
 
 ## The address or room code to share (host only), as reported by the transport.
 var shared_address: String = ""
@@ -55,6 +69,8 @@ func _ready() -> void:
 	theme = AppTheme.build()
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build_ui()
+	resized.connect(_update_layout)
+	_update_layout()
 	_show_start_view("")
 
 
@@ -76,21 +92,30 @@ func _build_ui() -> void:
 	var center: CenterContainer = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
-	var panel: PanelContainer = PanelContainer.new()
-	panel.custom_minimum_size = Vector2(560, 0)
+	panel = PanelContainer.new()
 	center.add_child(panel)
 	var root: VBoxContainer = VBoxContainer.new()
 	panel.add_child(root)
 
-	var title: Label = Label.new()
-	title.text = str(options.get("game_title", "Play with friends"))
-	title.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
-	root.add_child(title)
+	title_label = Label.new()
+	title_label.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
+	root.add_child(title_label)
 
 	start_view = _build_start_view()
 	root.add_child(start_view)
+	connecting_view = _build_connecting_view()
+	root.add_child(connecting_view)
 	lobby_view = _build_lobby_view()
 	root.add_child(lobby_view)
+
+
+## The panel grows with the window (a little over a third of the width), but never
+## wider than the window itself, so it fits from 1280x720 up to 1920x1080 and on resize.
+func _update_layout() -> void:
+	if panel == null:
+		return
+	var wanted: float = clampf(size.x * 0.4, 520.0, 760.0)
+	panel.custom_minimum_size.x = minf(wanted, maxf(0.0, size.x - 2.0 * Tokens.SPACE_L))
 
 
 func _build_start_view() -> Control:
@@ -140,11 +165,24 @@ func _build_start_view() -> Control:
 	return box
 
 
+func _build_connecting_view() -> Control:
+	var box: VBoxContainer = VBoxContainer.new()
+	connecting_label = _label("Connecting...")
+	connecting_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(connecting_label)
+	cancel_button = Button.new()
+	cancel_button.text = "Cancel"
+	cancel_button.pressed.connect(cancel)
+	box.add_child(cancel_button)
+	return box
+
+
 func _build_lobby_view() -> Control:
 	var box: VBoxContainer = VBoxContainer.new()
 	var address_row: HBoxContainer = HBoxContainer.new()
 	address_label = _label("")
 	address_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	address_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	address_row.add_child(address_label)
 	copy_button = Button.new()
 	copy_button.text = "Copy"
@@ -189,22 +227,27 @@ func host_session() -> void:
 	if not CoreResult.is_ok(cleaned):
 		status_label.text = str(cleaned["error"]["message"])
 		return
+	var game_id: String = str(options.get("game_id", ""))
+	if game_id.is_empty():
+		status_label.text = "No game selected to host."
+		return
+	var limits: Dictionary = _player_limits(game_id)
 	var config: Dictionary = _transport_config.duplicate()
 	if port_spin != null:
 		config["port"] = int(port_spin.value)
-	var transport: Transport = TransportFactory.create(config)
-	_host = LobbyHost.new(transport, str(options["app_version"]), str(options["game_id"]), cleaned["name"], int(options["min_players"]), int(options["max_players"]))
-	var info: Dictionary = _host.start(config)
-	if not CoreResult.is_ok(info):
-		status_label.text = "Could not host: %s" % str(info["error"]["message"])
-		_host = null
-		return
+	_host = LobbyHost.new(TransportFactory.create(config), str(options["app_version"]), game_id, cleaned["name"], limits["min"], limits["max"])
+	_host.hosting.connect(_on_hosting)
+	_host.host_failed.connect(_on_host_failed)
 	_host.state_changed.connect(_on_state_changed)
 	_host.game_started.connect(_on_game_started)
 	_host.closed.connect(_on_host_closed)
-	shared_address = str(info["address"])
-	_state = _host.state
-	_show_lobby_view()
+	var started: Dictionary = _host.start(config)
+	if not CoreResult.is_ok(started):
+		var message: String = str(started["error"]["message"])
+		_drop_host()
+		_show_start_view("Could not host: %s" % message)
+		return
+	_show_connecting("Starting your game...")
 
 
 func join_session() -> void:
@@ -227,22 +270,12 @@ func rejoin_session() -> void:
 	_begin_join(resume["address"], resume["name"], resume["identity"])
 
 
-func _begin_join(address: String, player_name: String, identity: Dictionary) -> void:
-	var config: Dictionary = _transport_config.duplicate()
-	_client = LobbyClient.new(TransportFactory.create(config), str(options["app_version"]), str(options["game_id"]))
-	_client.joined.connect(func(_player_id: String) -> void: _on_joined())
-	_client.join_failed.connect(_on_join_failed)
-	_client.state_changed.connect(_on_state_changed)
-	_client.action_failed.connect(func(_code: String, message: String, _action: String) -> void: lobby_status_label.text = message)
-	_client.game_started.connect(_on_game_started)
-	_client.left.connect(_on_left)
-	_joining_address = address
-	_joining_name = player_name
-	join_button.disabled = true
-	host_button.disabled = true
-	rejoin_button.disabled = true
-	status_label.text = "Connecting..."
-	_client.join(address, player_name, config, identity)
+## Stops connecting or starting, and returns to the start screen.
+func cancel() -> void:
+	if _host != null:
+		_host.close_now()  # hosting is not live yet, nobody is in it; _on_host_closed returns us
+	elif _client != null:
+		_client.leave_now()  # _on_left returns us to the start view
 
 
 func leave() -> void:
@@ -254,6 +287,24 @@ func leave() -> void:
 		_client.leave()  # _on_left returns us to the start view
 
 
+func _begin_join(address: String, player_name: String, identity: Dictionary) -> void:
+	var config: Dictionary = _transport_config.duplicate()
+	_client = LobbyClient.new(TransportFactory.create(config), str(options["app_version"]), str(options.get("join_game_id", "")))
+	var registry: GameRegistry = options.get("game_registry", null)
+	if registry != null:
+		_client.game_validator = registry.validator()
+	_client.joined.connect(func(_player_id: String) -> void: _on_joined())
+	_client.join_failed.connect(_on_join_failed)
+	_client.state_changed.connect(_on_state_changed)
+	_client.action_failed.connect(func(_code: String, message: String, _action: String) -> void: lobby_status_label.text = message)
+	_client.game_started.connect(_on_game_started)
+	_client.left.connect(_on_left)
+	_joining_address = address
+	_joining_name = player_name
+	_show_connecting("Connecting to %s..." % address.strip_edges())
+	_client.join(address, player_name, config, identity)
+
+
 func _act(action: Dictionary) -> void:
 	if _host != null:
 		var result: Dictionary = _host.act(action)
@@ -263,6 +314,17 @@ func _act(action: Dictionary) -> void:
 
 
 # --- reacting to the session -----------------------------------------------------
+
+func _on_hosting(info: Dictionary) -> void:
+	shared_address = str(info["address"])
+	_state = _host.state
+	_show_lobby_view()
+
+
+func _on_host_failed(reason: String) -> void:
+	_drop_host()
+	_show_start_view("Could not host: %s" % reason)
+
 
 func _on_state_changed(state: Dictionary) -> void:
 	_state = state
@@ -280,7 +342,7 @@ func _on_joined() -> void:
 	_show_lobby_view()
 
 
-func _on_join_failed(code: String, message: String) -> void:
+func _on_join_failed(code: String, message: String, _host_info: Dictionary) -> void:
 	if code != ErrorCodes.CONNECT_FAILED:
 		_resume = {}  # the host answered and said no; retrying with the same identity won't help
 	_forget_client()
@@ -300,6 +362,14 @@ func _on_host_closed() -> void:
 	_show_start_view("")
 
 
+## Releases a host that never went live (or failed) without waiting for a goodbye.
+func _drop_host() -> void:
+	if _host != null:
+		var host: LobbyHost = _host
+		_host = null
+		host.close_now()
+
+
 func _forget_client() -> void:
 	_client = null
 	_state = {}
@@ -307,20 +377,28 @@ func _forget_client() -> void:
 
 func _show_start_view(message: String) -> void:
 	start_view.visible = true
+	connecting_view.visible = false
 	lobby_view.visible = false
-	join_button.disabled = false
-	host_button.disabled = false
-	rejoin_button.disabled = false
 	rejoin_button.visible = not _resume.is_empty()
 	status_label.text = message
+	_update_title()
+
+
+func _show_connecting(message: String) -> void:
+	start_view.visible = false
+	connecting_view.visible = true
+	lobby_view.visible = false
+	connecting_label.text = message
 
 
 func _show_lobby_view() -> void:
 	start_view.visible = false
+	connecting_view.visible = false
 	lobby_view.visible = true
 	lobby_status_label.text = ""
 	if _client != null:
 		_state = _client.state
+	_update_title()
 	_render()
 
 
@@ -345,6 +423,24 @@ func _render() -> void:
 	ready_button.disabled = started
 	if started:
 		start_button.disabled = true
+	_update_title()
+
+
+func _update_title() -> void:
+	var game_id: String = str(_state.get("game_id", options.get("game_id", "")))
+	var registry: GameRegistry = options.get("game_registry", null)
+	if registry != null and registry.has(game_id):
+		title_label.text = registry.display_name(game_id)
+	else:
+		title_label.text = str(options.get("game_title", "Play with friends"))
+
+
+func _player_limits(game_id: String) -> Dictionary:
+	var registry: GameRegistry = options.get("game_registry", null)
+	if registry != null and registry.has(game_id):
+		var manifest: Dictionary = registry.get_manifest(game_id)
+		return {"min": int(manifest["min_players"]), "max": int(manifest["max_players"])}
+	return {"min": int(options.get("min_players", 2)), "max": int(options.get("max_players", 4))}
 
 
 func _player_row(slot: Dictionary, my_id: String, is_host: bool) -> Control:

@@ -28,9 +28,9 @@ Messages over 64 KB are rejected before parsing.
 
 | type | direction | meaning |
 |---|---|---|
-| `hello` | client > host | `app_version, game_id, player_name, [player_id, rejoin_token]` |
-| `welcome` | host > client | `player_id, rejoin_token` |
-| `reject` | host > client | `code, message`, then the host closes the connection |
+| `hello` | client > host | `app_version, player_name, [game_id], [player_id, rejoin_token]` |
+| `welcome` | host > client | `player_id, rejoin_token, game_id, app_version` (the host's) |
+| `reject` | host > client | `code, message, game_id, app_version` (the host's), then the host closes the connection |
 | `ping` / `pong` | both | liveness; any message also counts as a sign of life |
 | `lobby_action` | client > host | `{action: {type, ...}}` (set_ready, set_name, leave, start, kick) |
 | `lobby_state` | host > all | `{lobby: {...}}`, the full lobby after every change |
@@ -39,8 +39,21 @@ Messages over 64 KB are rejected before parsing.
 | `game_action` / `game_state` | both | game traffic; opaque to core |
 
 Error codes are in `core/net/error_codes.gd`. The handshake checks, in order: protocol
-version, game id, app version (all exact in v1), name. Unknown ids and wrong tokens get
-the same `BAD_TOKEN` answer.
+version, game id (only if the client sent one), app version (exact in v1), name. Unknown ids
+and wrong tokens get the same `BAD_TOKEN` answer.
+
+**Joiners do not pick a game.** `LobbyClient` joins without a `game_id`; the host's welcome
+(and every reject) says which game and app version the host runs. Give the client a
+`game_validator` (e.g. `GameRegistry.validator()`) and a host playing a game this app does
+not have ends with `UNKNOWN_GAME` and a clear message instead of a half-joined lobby.
+
+## Starting to host
+
+`Transport.host_session(config)` returns a failure only if hosting could not start (port in
+use...). Otherwise `session_ready({address, kind, ...})` (or later `host_failed(reason)`)
+follows from `poll()`: next poll for direct and loopback, after the relay answers for a
+relay. `HostSession` and `LobbyHost` re-emit these as `hosting` / `host_failed`, and
+`LobbyScene` shows "Starting your game..." with Cancel until it is live.
 
 ## Limits on the host (the tunnel address is public)
 
@@ -75,6 +88,12 @@ Kicked players and players who left the open lobby lose their identity.
 player's identity **including rejoin tokens**, and the game's own state. Save it with
 `SessionSnapshot.save_file("user://saves/...", snapshot)` (atomic write).
 
+A save has its own `save_version` (the file format), independent of the app version, so an
+app upgrade does not orphan saves. There are no migrations yet: a save with a `save_version`
+this code does not read is refused with `UNSUPPORTED_SAVE` and a message saying whether it
+is newer or older. The game's own `game_state` should carry its own version for the same
+reason.
+
 **Saves are private.** A save lets whoever holds it act as any player in it. Keep it in the
 user's own folder and only give it to someone you would trust to host the game. Tokens are
 rotated on each player's first rejoin after a resume, so a leaked save stops working once
@@ -84,7 +103,20 @@ To resume: create a fresh `LobbyHost`, call `restore(saved, as_player_id)` **bef
 `start()`, then host as usual. Any saved player can be the host; the previous host rejoins
 as an ordinary player using `SessionSnapshot.identity_of(saved, their_id)`. Everyone else
 is offline until they rejoin with the identity they were given. A save only loads into the
-same `game_id` and the same app version.
+same `game_id`. Players rejoin a resumed session with the app version of the new host, as
+for any live session.
+
+## Games and the registry
+
+`core/registry/` knows which games this app has, without naming any. A game ships a
+`manifest.json` in its own folder (`GameManifest` documents the fields: id, display name,
+icon, player counts, rules class, UI scene). `GameRegistry.load_from("res://games")` scans
+the folders, validates each manifest (paths must exist and stay inside the game's folder,
+the rules class must extend `RefCounted`, the id must equal the folder name) and registers
+the good ones. One broken manifest is reported in `errors` and never hides the others. A
+folder with no manifest is skipped (a game still in development). The home screen builds
+its list from `registry.all()`; the lobby uses it for names, player limits and the
+unknown-game check.
 
 ## Adding a transport (e.g. the cloud relay)
 
@@ -105,10 +137,11 @@ hidden information stay out of logs). Change `MessageLog.sink` to redirect, or s
 `docs/running-tests.md` explains how to run them. `tests/core/`:
 
 - pure units: envelope, handshake, rate limiter, address parser, player registry,
-  lobby logic, snapshot;
+  lobby logic, snapshot, game manifests and registry (fixtures in `tests/fixtures/games`);
 - contract suites run once per transport (loopback, fake relay, direct WebSocket on
   localhost): `transport_contract`, `session_contract`, `lobby_contract`;
-- `test_lobby_scene.gd` drives two lobby screens like two players.
+- `test_lobby_scene.gd` drives two lobby screens like two players, including the connecting
+  state with Cancel and the layout at 1280x720, 1920x1080 and on window resize.
 
 Network tests use `NetWait` (poll until a condition holds or N frames pass) and a
 `FakeClock`, so timeouts are tested without waiting.

@@ -16,6 +16,8 @@ extends RefCounted
 signal player_joined(player_id: String, rejoined: bool)
 signal player_disconnected(player_id: String)
 signal player_message(player_id: String, message: Dictionary)
+signal hosting(info: Dictionary)  # transport is live: info.address is what to share
+signal host_failed(reason: String)
 signal closed()  # after close(): everyone has left or the grace period ended
 
 var transport: Transport
@@ -63,9 +65,12 @@ func _init(host_transport: Transport, app_version: String, game_id: String, opti
 	transport.peer_connected.connect(_on_peer_connected)
 	transport.peer_disconnected.connect(_on_peer_disconnected)
 	transport.message_received.connect(_on_message)
+	transport.session_ready.connect(_on_session_ready)
+	transport.host_failed.connect(_on_host_failed)
 
 
-## Starts hosting. Returns the transport's session info ({ok, address, kind, ...}).
+## Starts hosting. Returns a failure if it could not even start; otherwise the address
+## to share arrives with the `hosting` signal (or `host_failed`).
 func start(transport_config: Dictionary) -> Dictionary:
 	return transport.host_session(transport_config)
 
@@ -155,7 +160,17 @@ func _finish_close() -> void:
 	transport.peer_connected.disconnect(_on_peer_connected)
 	transport.peer_disconnected.disconnect(_on_peer_disconnected)
 	transport.message_received.disconnect(_on_message)
+	transport.session_ready.disconnect(_on_session_ready)
+	transport.host_failed.disconnect(_on_host_failed)
 	closed.emit()
+
+
+func _on_session_ready(info: Dictionary) -> void:
+	hosting.emit(info)
+
+
+func _on_host_failed(reason: String) -> void:
+	host_failed.emit(reason)
 
 
 func _on_peer_connected(peer_id: int) -> void:
@@ -283,7 +298,7 @@ func _admit(peer_id: int, player_id: String, rejoined: bool) -> void:
 	var extra: Dictionary = {}
 	if welcome_extra.is_valid():
 		extra = welcome_extra.call(player_id)
-	_send(peer_id, Handshake.welcome(player_id, registry.token_of(player_id), extra))
+	_send(peer_id, Handshake.welcome(player_id, registry.token_of(player_id), _game_id, _app_version, extra))
 	player_joined.emit(player_id, rejoined)
 
 
@@ -291,7 +306,7 @@ func _admit(peer_id: int, player_id: String, rejoined: bool) -> void:
 func _refuse(peer_id: int, code: String, message: String) -> void:
 	_pending.erase(peer_id)
 	_closing[peer_id] = true
-	_send(peer_id, Handshake.reject(code, message))
+	_send(peer_id, Handshake.reject(code, message, _game_id, _app_version))
 	transport.disconnect_peer(peer_id)
 
 

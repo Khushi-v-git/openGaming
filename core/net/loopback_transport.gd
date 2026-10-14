@@ -36,7 +36,8 @@ func host_session(config: Dictionary) -> Dictionary:
 		return CoreResult.failure("ADDRESS_IN_USE", "address %s is already hosted" % address)
 	_role = Role.HOST
 	_address = address
-	return CoreResult.success({"address": address, "kind": "loopback"})
+	_inbox.append({"kind": "session_ready", "info": {"address": address, "kind": "loopback"}})
+	return CoreResult.success()
 
 
 func join_session(address_or_code: String, _config: Dictionary) -> void:
@@ -102,6 +103,8 @@ func poll() -> void:
 		if epoch != _epoch:
 			return
 		match event["kind"]:
+			"session_ready":
+				session_ready.emit(event["info"])
 			"join_ok":
 				join_succeeded.emit()
 			"join_failed":

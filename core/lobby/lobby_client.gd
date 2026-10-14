@@ -7,7 +7,7 @@ extends RefCounted
 ## Call leave() when done: it breaks the references this object holds to the session.
 
 signal joined(player_id: String)
-signal join_failed(code: String, message: String)  # handshake rejected or host unreachable
+signal join_failed(code: String, message: String, host_info: Dictionary)  # rejected / unreachable / unknown game; host_info = {game_id, app_version}
 signal state_changed(state: Dictionary)
 signal action_failed(code: String, message: String, action_type: String)
 signal game_started(state: Dictionary)
@@ -19,10 +19,14 @@ const _LEAVE_WAIT_MSEC: int = 1500
 var session: ClientSession
 var state: Dictionary = {}
 var player_id: String = ""
+## Optional: (game_id) -> bool, whether this app has that game (e.g. GameRegistry.has).
+## If the host plays a game we do not have, joining ends with UNKNOWN_GAME.
+var game_validator: Callable = Callable()
 var _leave_deadline: int = 0
 
 
-func _init(transport: Transport, app_version: String, game_id: String, session_options: Dictionary = {}) -> void:
+## game_id "" (the normal case) means: play whatever game the host runs.
+func _init(transport: Transport, app_version: String, game_id: String = "", session_options: Dictionary = {}) -> void:
 	session = ClientSession.new(transport, app_version, game_id, session_options)
 	session.connected.connect(_on_connected)
 	session.rejected.connect(_on_rejected)
@@ -91,18 +95,24 @@ func is_host() -> bool:
 # --- session events --------------------------------------------------------------
 
 func _on_connected(welcome: Dictionary) -> void:
+	var host_info: Dictionary = {"game_id": str(welcome.get("game_id", "")), "app_version": str(welcome.get("app_version", ""))}
+	if game_validator.is_valid() and not game_validator.call(host_info["game_id"]):
+		session.leave()
+		_release()
+		join_failed.emit(ErrorCodes.UNKNOWN_GAME, "This host is playing '%s', which this copy of the app does not have." % host_info["game_id"], host_info)
+		return
 	player_id = str(welcome["player_id"])
 	joined.emit(player_id)
 
 
-func _on_rejected(code: String, message: String) -> void:
+func _on_rejected(code: String, message: String, host_info: Dictionary) -> void:
 	_release()
-	join_failed.emit(code, message)
+	join_failed.emit(code, message, host_info)
 
 
 func _on_connect_failed(reason: String) -> void:
 	_release()
-	join_failed.emit(ErrorCodes.CONNECT_FAILED, reason)
+	join_failed.emit(ErrorCodes.CONNECT_FAILED, reason, {})
 
 
 func _on_host_lost(reason: String) -> void:

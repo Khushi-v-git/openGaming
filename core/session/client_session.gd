@@ -5,7 +5,7 @@ extends RefCounted
 ## The owner calls poll() every frame (it polls the transport too).
 
 signal connected(welcome: Dictionary)  # welcome payload: player_id, rejoin_token, extras
-signal rejected(code: String, message: String)  # handshake refused (version, room full...)
+signal rejected(code: String, message: String, host_info: Dictionary)  # handshake refused; host_info = {game_id, app_version} of the host
 signal connect_failed(reason: String)  # could not reach the host or handshake never finished
 signal host_lost(reason: String)  # connection dropped after a successful join
 signal session_ended(code: String, message: String)  # host closed the session or removed us
@@ -17,6 +17,9 @@ var transport: Transport
 var clock: Callable = func() -> int: return Time.get_ticks_msec()
 var player_id: String = ""
 var rejoin_token: String = ""
+## What the host runs, from its welcome or reject ("" until we hear from it).
+var host_game_id: String = ""
+var host_app_version: String = ""
 
 var _app_version: String
 var _game_id: String
@@ -29,7 +32,7 @@ var _handshake_deadline: int = 0
 var _last_heard: int = 0
 
 
-func _init(client_transport: Transport, app_version: String, game_id: String, options: Dictionary = {}) -> void:
+func _init(client_transport: Transport, app_version: String, game_id: String = "", options: Dictionary = {}) -> void:
 	transport = client_transport
 	_app_version = app_version
 	_game_id = game_id
@@ -112,11 +115,15 @@ func _on_message(peer_id: int, message: Dictionary) -> void:
 				_state = State.ACTIVE
 				player_id = str(payload.get("player_id", ""))
 				rejoin_token = str(payload.get("rejoin_token", ""))
+				host_game_id = str(payload.get("game_id", ""))
+				host_app_version = str(payload.get("app_version", ""))
 				connected.emit(payload)
 			elif message["type"] == Protocol.T_REJECT:
 				_state = State.IDLE
 				transport.leave()
-				rejected.emit(str(payload.get("code", "")), str(payload.get("message", "")))
+				host_game_id = str(payload.get("game_id", ""))
+				host_app_version = str(payload.get("app_version", ""))
+				rejected.emit(str(payload.get("code", "")), str(payload.get("message", "")), {"game_id": host_game_id, "app_version": host_app_version})
 		State.ACTIVE:
 			match message["type"]:
 				Protocol.T_PING:

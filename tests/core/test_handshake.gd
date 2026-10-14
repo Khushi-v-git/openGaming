@@ -44,8 +44,33 @@ func test_protocol_beats_game_beats_version() -> void:
 	assert_eq(CoreResult.error_code(Handshake.validate_hello(m, APP, GAME)), ErrorCodes.PROTOCOL_MISMATCH)
 
 
+func test_game_id_is_optional_in_hello() -> void:
+	var m: Dictionary = Handshake.hello(APP, "", "Asha")
+	assert_false(m["payload"].has("game_id"), "an empty game_id is left out")
+	assert_true(CoreResult.is_ok(Handshake.validate_hello(m, APP, GAME)))
+	m["payload"]["game_id"] = ""
+	assert_true(CoreResult.is_ok(Handshake.validate_hello(m, APP, GAME)), "an explicitly empty one means any game")
+
+
+func test_a_supplied_game_id_must_still_match_and_be_text() -> void:
+	assert_eq(CoreResult.error_code(Handshake.validate_hello(Handshake.hello(APP, "other", "A"), APP, GAME)), ErrorCodes.WRONG_GAME)
+	var m: Dictionary = Handshake.hello(APP, GAME, "A")
+	m["payload"]["game_id"] = 7
+	assert_eq(CoreResult.error_code(Handshake.validate_hello(m, APP, GAME)), ErrorCodes.MALFORMED)
+
+
+func test_welcome_and_reject_carry_the_hosts_game_and_version() -> void:
+	var w: Dictionary = Handshake.welcome("p1", "tok", "ludo", "1.2.0")
+	assert_eq(w["payload"]["game_id"], "ludo")
+	assert_eq(w["payload"]["app_version"], "1.2.0")
+	var r: Dictionary = Handshake.reject("ROOM_FULL", "full", "ludo", "1.2.0")
+	assert_eq(r["payload"]["game_id"], "ludo")
+	assert_eq(r["payload"]["app_version"], "1.2.0")
+	assert_eq(r["payload"]["code"], "ROOM_FULL")
+
+
 func test_missing_or_wrong_typed_fields_are_malformed() -> void:
-	for field: String in ["app_version", "game_id", "player_name"]:
+	for field: String in ["app_version", "player_name"]:
 		var m: Dictionary = _valid()
 		m["payload"].erase(field)
 		assert_eq(CoreResult.error_code(Handshake.validate_hello(m, APP, GAME)), ErrorCodes.MALFORMED, field)
@@ -66,7 +91,7 @@ func test_clean_name() -> void:
 
 
 func test_builders_make_valid_envelopes() -> void:
-	for m: Dictionary in [Handshake.hello(APP, GAME, "A"), Handshake.welcome("p1", "tok"), Handshake.reject("X", "y")]:
+	for m: Dictionary in [Handshake.hello(APP, GAME, "A"), Handshake.welcome("p1", "tok", GAME, APP), Handshake.reject("X", "y", GAME, APP)]:
 		assert_true(CoreResult.is_ok(Envelope.validate(m)))
 		assert_true(Envelope.is_plain_data(m))
-	assert_eq(Handshake.welcome("p1", "tok", {"extra": 1})["payload"], {"extra": 1, "player_id": "p1", "rejoin_token": "tok"})
+	assert_eq(Handshake.welcome("p1", "tok", GAME, APP, {"extra": 1})["payload"], {"extra": 1, "player_id": "p1", "rejoin_token": "tok", "game_id": GAME, "app_version": APP})

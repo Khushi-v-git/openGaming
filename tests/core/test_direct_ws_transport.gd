@@ -6,7 +6,7 @@ func make_env() -> TransportEnv:
 
 
 func test_address_is_host_and_port() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var parsed: Dictionary = AddressParser.parse(host.address, 1)
 	assert_true(CoreResult.is_ok(parsed))
 	assert_eq(parsed["host"], "127.0.0.1")
@@ -14,8 +14,16 @@ func test_address_is_host_and_port() -> void:
 	assert_eq((host.transport as DirectWsTransport).listening_port(), parsed["port"])
 
 
+func test_session_ready_info_carries_port_and_lan_addresses() -> void:
+	var host: TransportRig = await start_host()
+	var info: Dictionary = host.recorder.ready[0]
+	assert_eq(info["kind"], "direct_ws")
+	assert_eq(info["port"], (host.transport as DirectWsTransport).listening_port())
+	assert_true(info["lan_addresses"] is Array)
+
+
 func test_port_in_use_reports_listen_failed() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var port: int = (host.transport as DirectWsTransport).listening_port()
 	var other: DirectWsTransport = DirectWsTransport.new()
 	var result: Dictionary = other.host_session({"port": port, "bind_address": "127.0.0.1"})
@@ -31,7 +39,7 @@ func test_bad_address_fails_to_join() -> void:
 
 
 func test_malformed_message_drops_the_peer() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var raw: WebSocketPeer = WebSocketPeer.new()
 	assert_eq(raw.connect_to_url("ws://%s" % host.address), OK)
 	var ok: bool = await pump(func() -> bool:
@@ -47,7 +55,7 @@ func test_malformed_message_drops_the_peer() -> void:
 
 
 func test_binary_message_drops_the_peer() -> void:
-	var host: TransportRig = start_host()
+	var host: TransportRig = await start_host()
 	var raw: WebSocketPeer = WebSocketPeer.new()
 	raw.connect_to_url("ws://%s" % host.address)
 	var ok: bool = await pump(func() -> bool:
@@ -63,15 +71,16 @@ func test_binary_message_drops_the_peer() -> void:
 
 func test_max_pending_limits_upgrade_connections() -> void:
 	var host_transport: DirectWsTransport = DirectWsTransport.new()
-	var info: Dictionary = host_transport.host_session({"port": 0, "bind_address": "127.0.0.1", "max_pending": 2, "max_connections": 3})
-	assert_true(CoreResult.is_ok(info))
+	var started: Dictionary = host_transport.host_session({"port": 0, "bind_address": "127.0.0.1", "max_pending": 2, "max_connections": 3})
+	assert_true(CoreResult.is_ok(started))
+	var port: int = host_transport.listening_port()
 	var rig: TransportRig = TransportRig.new(host_transport)
 	_rigs.append(rig)
 	# Open raw TCP sockets that never finish the WebSocket upgrade.
 	var raw: Array[StreamPeerTCP] = []
 	for _i: int in 6:
 		var tcp: StreamPeerTCP = StreamPeerTCP.new()
-		tcp.connect_to_host("127.0.0.1", info["port"])
+		tcp.connect_to_host("127.0.0.1", port)
 		raw.append(tcp)
 	await NetWait.frames(self, _transports(), 30)
 	for tcp: StreamPeerTCP in raw:

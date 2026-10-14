@@ -23,16 +23,23 @@ func start_lobby(min_players: int = 2, max_players: int = 4, options: Dictionary
 	rig.lobby = LobbyHost.new(env.make_transport(), APP, GAME, "Hosty", min_players, max_players, options)
 	rig.lobby.session.clock = clock.as_callable()
 	rig.recorder = LobbyHostRecorder.new(rig.lobby)
-	var info: Dictionary = rig.lobby.start(env.host_config())
-	assert_true(CoreResult.is_ok(info), "host start failed: %s" % str(info))
-	rig.address = str(info.get("address", ""))
+	var result: Dictionary = rig.lobby.start(env.host_config())
+	assert_true(CoreResult.is_ok(result), "host start failed: %s" % str(result))
 	track(rig.lobby, rig.lobby.session.transport)
+	await _wait_hosting(rig)
 	return rig
+
+
+func _wait_hosting(rig: LobbyHostRig) -> void:
+	var ok: bool = await pump(func() -> bool: return not rig.recorder.hosting.is_empty() or not rig.recorder.host_failures.is_empty())
+	assert_true(ok and rig.recorder.host_failures.is_empty(), "hosting never became ready")
+	if not rig.recorder.hosting.is_empty():
+		rig.address = str(rig.recorder.hosting[0].get("address", ""))
 
 
 func new_player(host: LobbyHostRig, player_name: String, identity: Dictionary = {}) -> LobbyClientRig:
 	var rig: LobbyClientRig = LobbyClientRig.new()
-	rig.client = LobbyClient.new(env.make_transport(), APP, GAME)
+	rig.client = LobbyClient.new(env.make_transport(), APP)  # joiners do not pick a game
 	rig.client.session.clock = clock.as_callable()
 	rig.recorder = LobbyClientRecorder.new(rig.client)
 	track(rig.client, rig.client.session.transport)
@@ -68,14 +75,14 @@ func slot_names(state: Dictionary) -> Array[String]:
 # --- joining ---------------------------------------------------------------------
 
 func test_new_lobby_has_only_the_host() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	assert_eq(slot_names(host.state()), ["Hosty"] as Array[String])
 	assert_eq(host.state()["host_player_id"], host.lobby.local_player_id)
 	assert_true(host.state()["slots"][0]["connected"])
 
 
 func test_players_join_and_everyone_sees_the_same_state() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	var c: LobbyClientRig = await join_player(host, "Cy")
@@ -88,7 +95,7 @@ func test_players_join_and_everyone_sees_the_same_state() -> void:
 
 
 func test_full_room_is_rejected_with_room_full() -> void:
-	var host: LobbyHostRig = start_lobby(2, 2)
+	var host: LobbyHostRig = await start_lobby(2, 2)
 	await join_player(host, "Asha")
 	var late: LobbyClientRig = await join_player(host, "Late")
 	assert_eq(late.recorder.join_failures.size(), 1)
@@ -97,7 +104,7 @@ func test_full_room_is_rejected_with_room_full() -> void:
 
 
 func test_duplicate_name_is_rejected() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	await join_player(host, "Asha")
 	var dup: LobbyClientRig = await join_player(host, "asha")
 	assert_eq(dup.recorder.join_failures[0]["code"], ErrorCodes.NAME_TAKEN)
@@ -106,7 +113,7 @@ func test_duplicate_name_is_rejected() -> void:
 
 
 func test_joining_after_start_is_rejected() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_ready(true)
 	await converge(host, [a])
@@ -118,7 +125,7 @@ func test_joining_after_start_is_rejected() -> void:
 # --- ready and start -------------------------------------------------------------
 
 func test_ready_start_flow() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_eq(CoreResult.error_code(host.lobby.act({"type": "start"})), ErrorCodes.NOT_ALL_READY)
@@ -135,7 +142,7 @@ func test_ready_start_flow() -> void:
 
 
 func test_player_can_unready() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_ready(true)
 	assert_true(await converge(host, [a]))
@@ -145,7 +152,7 @@ func test_player_can_unready() -> void:
 
 
 func test_only_host_can_start() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_ready(true)
 	await converge(host, [a])
@@ -157,7 +164,7 @@ func test_only_host_can_start() -> void:
 
 
 func test_set_name_updates_everyone_and_the_registry() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_name("Ashley")
 	assert_true(await pump(func() -> bool: return host.state()["slots"][1]["name"] == "Ashley"))
@@ -168,7 +175,7 @@ func test_set_name_updates_everyone_and_the_registry() -> void:
 # --- leaving, kicking, dropping --------------------------------------------------
 
 func test_client_leave_removes_slot_for_everyone() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_true(await converge(host, [a, b]))
@@ -179,7 +186,7 @@ func test_client_leave_removes_slot_for_everyone() -> void:
 
 
 func test_dropped_connection_removes_slot_in_open_lobby() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_true(await converge(host, [a, b]))
@@ -189,7 +196,7 @@ func test_dropped_connection_removes_slot_in_open_lobby() -> void:
 
 
 func test_dropped_connection_keeps_slot_during_game() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_ready(true)
 	await converge(host, [a])
@@ -202,7 +209,7 @@ func test_dropped_connection_keeps_slot_during_game() -> void:
 
 
 func test_host_can_kick_a_player() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_true(await converge(host, [a, b]))
@@ -214,7 +221,7 @@ func test_host_can_kick_a_player() -> void:
 
 
 func test_player_cannot_kick() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_true(await converge(host, [a, b]))
@@ -227,7 +234,7 @@ func test_player_cannot_kick() -> void:
 # --- host going away -------------------------------------------------------------
 
 func test_host_close_tells_players_the_session_ended() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_true(await converge(host, [a, b]))
@@ -238,7 +245,7 @@ func test_host_close_tells_players_the_session_ended() -> void:
 
 
 func test_host_disconnect_is_reported_to_players() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_true(await converge(host, [a, b]))
@@ -249,7 +256,7 @@ func test_host_disconnect_is_reported_to_players() -> void:
 
 
 func test_host_survives_a_player_vanishing_mid_game() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	a.client.set_ready(true)
@@ -266,7 +273,7 @@ func test_host_survives_a_player_vanishing_mid_game() -> void:
 # --- abuse -----------------------------------------------------------------------
 
 func test_system_actions_cannot_be_sent_by_clients() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	assert_true(await converge(host, [a]))
 	var before: Dictionary = host.state().duplicate(true)
@@ -279,7 +286,7 @@ func test_system_actions_cannot_be_sent_by_clients() -> void:
 
 
 func test_malformed_lobby_action_is_answered_with_an_error() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.session.send(Envelope.make(Protocol.T_LOBBY_ACTION, {"action": 5}))
 	assert_true(await pump(func() -> bool: return a.recorder.action_failures.size() >= 1))
@@ -287,7 +294,7 @@ func test_malformed_lobby_action_is_answered_with_an_error() -> void:
 
 
 func test_a_player_can_only_act_for_themselves() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	assert_true(await converge(host, [a, b]))
@@ -298,7 +305,7 @@ func test_a_player_can_only_act_for_themselves() -> void:
 
 
 func test_game_traffic_is_passed_up_not_interpreted() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "roll"}))
 	assert_true(await pump(func() -> bool: return host.recorder.game_messages.size() >= 1))
@@ -309,7 +316,7 @@ func test_game_traffic_is_passed_up_not_interpreted() -> void:
 # --- polite leave ----------------------------------------------------------------
 
 func test_polite_leave_is_recorded_by_the_host_even_mid_game() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_ready(true)
 	await converge(host, [a])
@@ -323,7 +330,7 @@ func test_polite_leave_is_recorded_by_the_host_even_mid_game() -> void:
 
 
 func test_leave_gives_up_waiting_for_a_silent_host() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	_pollers.erase(host.lobby)  # host froze: never answers the leave
 	a.client.leave()
@@ -345,7 +352,7 @@ func _start_game_with(host: LobbyHostRig, players: Array) -> void:
 
 
 func test_dropped_player_rejoins_and_gets_full_state() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	host.lobby.game_view_provider = func(player_id: String) -> Dictionary: return {"you": player_id, "board": [1, 2, 3]}
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
@@ -369,7 +376,7 @@ func test_dropped_player_rejoins_and_gets_full_state() -> void:
 
 
 func test_rejoin_rotates_the_token() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	await _start_game_with(host, [a])
 	var old_identity: Dictionary = a.client.identity()
@@ -381,7 +388,7 @@ func test_rejoin_rotates_the_token() -> void:
 
 
 func test_old_token_works_until_the_new_one_is_confirmed() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	await _start_game_with(host, [a])
 	var token_a: Dictionary = a.client.identity()
@@ -410,7 +417,7 @@ func test_old_token_works_until_the_new_one_is_confirmed() -> void:
 
 
 func test_wrong_token_and_unknown_player_get_the_same_rejection() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	await _start_game_with(host, [a])
 	var wrong_token: LobbyClientRig = await join_player(host, "Asha", {"player_id": a.client.player_id, "rejoin_token": "nope"})
@@ -422,7 +429,7 @@ func test_wrong_token_and_unknown_player_get_the_same_rejection() -> void:
 
 
 func test_rejoin_replaces_a_connection_the_host_has_not_noticed_dying() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	await _start_game_with(host, [a])
 	var seen_disconnected: Array[bool] = [false]
@@ -440,7 +447,7 @@ func test_rejoin_replaces_a_connection_the_host_has_not_noticed_dying() -> void:
 
 
 func test_rejoin_in_open_lobby_takes_a_seat_again() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_ready(true)
 	await converge(host, [a])
@@ -456,7 +463,7 @@ func test_rejoin_in_open_lobby_takes_a_seat_again() -> void:
 
 
 func test_rejoin_is_refused_if_the_seat_was_taken() -> void:
-	var host: LobbyHostRig = start_lobby(2, 2)
+	var host: LobbyHostRig = await start_lobby(2, 2)
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var identity: Dictionary = a.client.identity()
 	a.client.session.transport.leave()
@@ -468,7 +475,7 @@ func test_rejoin_is_refused_if_the_seat_was_taken() -> void:
 
 
 func test_kicked_player_cannot_come_back() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var identity: Dictionary = a.client.identity()
 	host.lobby.act({"type": "kick", "player_id": a.client.player_id})
@@ -479,7 +486,7 @@ func test_kicked_player_cannot_come_back() -> void:
 
 
 func test_player_who_left_the_open_lobby_cannot_use_the_old_identity() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var identity: Dictionary = a.client.identity()
 	a.client.leave()
@@ -489,7 +496,7 @@ func test_player_who_left_the_open_lobby_cannot_use_the_old_identity() -> void:
 
 
 func test_player_removed_or_gone_mid_game_cannot_rejoin() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	await _start_game_with(host, [a, b])
@@ -505,7 +512,7 @@ func test_player_removed_or_gone_mid_game_cannot_rejoin() -> void:
 
 
 func test_players_who_dropped_before_start_have_no_identity_afterwards() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	var a_identity: Dictionary = a.client.identity()
@@ -521,7 +528,7 @@ func test_players_who_dropped_before_start_have_no_identity_afterwards() -> void
 
 
 func test_host_tolerates_every_player_dropping_and_they_can_all_come_back() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	await _start_game_with(host, [a, b])
@@ -539,7 +546,7 @@ func test_host_tolerates_every_player_dropping_and_they_can_all_come_back() -> v
 
 
 func test_rejoin_still_checks_the_app_version() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var identity: Dictionary = a.client.identity()
 	var wrong: LobbyClientRig = LobbyClientRig.new()
@@ -560,18 +567,18 @@ func resume_lobby(saved: Dictionary, as_player_id: String = "", app_version: Str
 	rig.lobby.session.clock = clock.as_callable()
 	rig.recorder = LobbyHostRecorder.new(rig.lobby)
 	var restored: Dictionary = rig.lobby.restore(saved, as_player_id)
-	if CoreResult.is_ok(restored):
-		var info: Dictionary = rig.lobby.start(env.host_config())
-		assert_true(CoreResult.is_ok(info), "resumed host failed to start: %s" % str(info))
-		rig.address = str(info.get("address", ""))
 	track(rig.lobby, rig.lobby.session.transport)
+	if CoreResult.is_ok(restored):
+		var started: Dictionary = rig.lobby.start(env.host_config())
+		assert_true(CoreResult.is_ok(started), "resumed host failed to start: %s" % str(started))
+		await _wait_hosting(rig)
 	return [rig, restored]
 
 
 ## Plays a 3-player game up to the point of saving; returns {snapshot, a, b} where a and
 ## b are the clients' identities before the "crash".
 func play_and_save(game_state: Dictionary) -> Dictionary:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	await _start_game_with(host, [a, b])
@@ -589,7 +596,7 @@ func test_resume_as_same_host_players_rejoin_with_saved_identities() -> void:
 	var saved: Dictionary = played["snapshot"]
 	var ids: Dictionary = played["ids"]
 
-	var resumed: Array = resume_lobby(saved)
+	var resumed: Array = await resume_lobby(saved)
 	var host: LobbyHostRig = resumed[0]
 	assert_true(CoreResult.is_ok(resumed[1]))
 	assert_eq(resumed[1]["game_state"], {"turn": 3}, "the game gets its own state back")
@@ -619,7 +626,7 @@ func test_resume_as_a_different_player_makes_them_host() -> void:
 	var ids: Dictionary = played["ids"]
 	var new_host_id: String = ids["b"]["player_id"]
 
-	var resumed: Array = resume_lobby(saved, new_host_id)
+	var resumed: Array = await resume_lobby(saved, new_host_id)
 	var host: LobbyHostRig = resumed[0]
 	assert_true(CoreResult.is_ok(resumed[1]))
 	assert_eq(host.lobby.local_player_id, new_host_id)
@@ -638,7 +645,7 @@ func test_resume_as_a_different_player_makes_them_host() -> void:
 
 func test_resumed_game_turns_away_strangers() -> void:
 	var played: Dictionary = await play_and_save({})
-	var host: LobbyHostRig = resume_lobby(played["snapshot"])[0]
+	var host: LobbyHostRig = (await resume_lobby(played["snapshot"]))[0]
 	var stranger: LobbyClientRig = await join_player(host, "Newbie")
 	assert_eq(stranger.recorder.join_failures[0]["code"], ErrorCodes.GAME_IN_PROGRESS)
 
@@ -646,7 +653,7 @@ func test_resumed_game_turns_away_strangers() -> void:
 func test_a_leaked_save_stops_working_once_the_real_player_is_back() -> void:
 	var played: Dictionary = await play_and_save({})
 	var saved: Dictionary = played["snapshot"]
-	var host: LobbyHostRig = resume_lobby(saved)[0]
+	var host: LobbyHostRig = (await resume_lobby(saved))[0]
 	var real: LobbyClientRig = await join_player(host, "Asha", played["ids"]["a"])
 	assert_eq(real.recorder.joined.size(), 1)
 	real.client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "move"}))
@@ -657,34 +664,42 @@ func test_a_leaked_save_stops_working_once_the_real_player_is_back() -> void:
 	assert_eq(thief.recorder.join_failures[0]["code"], ErrorCodes.BAD_TOKEN)
 
 
-func test_a_save_for_another_game_or_app_version_is_refused() -> void:
+func test_a_save_for_another_game_is_refused_but_a_newer_app_version_is_fine() -> void:
 	var played: Dictionary = await play_and_save({})
-	var other_version: Array = resume_lobby(played["snapshot"], "", "2.0.0")
-	assert_eq(CoreResult.error_code(other_version[1]), ErrorCodes.APP_VERSION_MISMATCH)
-	var other_game: Array = resume_lobby(played["snapshot"], "", APP, "other_game")
+	var other_game: Array = await resume_lobby(played["snapshot"], "", APP, "other_game")
 	assert_eq(CoreResult.error_code(other_game[1]), ErrorCodes.WRONG_GAME)
+	var upgraded: Array = await resume_lobby(played["snapshot"], "", "2.0.0")
+	assert_true(CoreResult.is_ok(upgraded[1]), "an app upgrade must not orphan saves")
+	assert_eq((upgraded[0] as LobbyHostRig).state()["phase"], LobbyLogic.PHASE_IN_GAME)
+
+
+func test_a_save_from_an_unknown_format_is_refused() -> void:
+	var played: Dictionary = await play_and_save({})
+	var saved: Dictionary = played["snapshot"].duplicate(true)
+	saved["save_version"] = 99
+	assert_eq(CoreResult.error_code((await resume_lobby(saved))[1]), ErrorCodes.UNSUPPORTED_SAVE)
 
 
 func test_resume_refuses_a_player_who_left_or_does_not_exist() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	await _start_game_with(host, [a, b])
 	a.client.leave()
 	await pump(func() -> bool: return host.state()["slots"][1]["left"])
 	var saved: Dictionary = host.lobby.snapshot({})
-	assert_eq(CoreResult.error_code(resume_lobby(saved, a.client.player_id)[1]), ErrorCodes.PLAYER_LEFT)
-	assert_eq(CoreResult.error_code(resume_lobby(saved, "p99")[1]), ErrorCodes.UNKNOWN_PLAYER)
+	assert_eq(CoreResult.error_code((await resume_lobby(saved, a.client.player_id))[1]), ErrorCodes.PLAYER_LEFT)
+	assert_eq(CoreResult.error_code((await resume_lobby(saved, "p99"))[1]), ErrorCodes.UNKNOWN_PLAYER)
 
 
 func test_a_save_can_only_be_loaded_before_hosting_starts() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var saved: Dictionary = host.lobby.snapshot({})
 	assert_eq(CoreResult.error_code(host.lobby.restore(saved)), ErrorCodes.WRONG_PHASE)
 
 
 func test_an_open_lobby_can_be_saved_and_resumed_too() -> void:
-	var host: LobbyHostRig = start_lobby()
+	var host: LobbyHostRig = await start_lobby()
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	a.client.set_ready(true)
 	await converge(host, [a])
@@ -693,7 +708,7 @@ func test_an_open_lobby_can_be_saved_and_resumed_too() -> void:
 	host.lobby.session.transport.leave()
 	await pump(func() -> bool: return a.recorder.left.size() >= 1)
 
-	var resumed: LobbyHostRig = resume_lobby(saved)[0]
+	var resumed: LobbyHostRig = (await resume_lobby(saved))[0]
 	assert_eq(resumed.state()["phase"], LobbyLogic.PHASE_OPEN)
 	assert_eq(CoreResult.error_code(resumed.lobby.act({"type": "start"})), ErrorCodes.NOT_ALL_READY, "Asha is still offline")
 	var a2: LobbyClientRig = await join_player(resumed, "Asha", identity)
@@ -703,3 +718,66 @@ func test_an_open_lobby_can_be_saved_and_resumed_too() -> void:
 	a2.client.set_ready(true)
 	assert_true(await pump(func() -> bool: return LobbyLogic.ready_to_start(resumed.state())))
 	assert_true(CoreResult.is_ok(resumed.lobby.act({"type": "start"})))
+
+
+# --- joiners do not pick a game ---------------------------------------------------
+
+func test_joiner_learns_the_hosts_game_and_version() -> void:
+	var host: LobbyHostRig = await start_lobby()
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	assert_eq(a.client.session.host_game_id, GAME)
+	assert_eq(a.client.session.host_app_version, APP)
+	assert_eq(a.client.state["game_id"], GAME)
+
+
+func test_joiner_whose_app_has_the_game_joins() -> void:
+	var host: LobbyHostRig = await start_lobby()
+	var rig: LobbyClientRig = LobbyClientRig.new()
+	rig.client = LobbyClient.new(env.make_transport(), APP)
+	rig.client.game_validator = func(game_id: String) -> bool: return game_id == GAME
+	rig.recorder = LobbyClientRecorder.new(rig.client)
+	track(rig.client, rig.client.session.transport)
+	rig.client.join(host.address, "Asha", env.join_config())
+	assert_true(await pump(func() -> bool: return rig.recorder.has_outcome(), 3000))
+	assert_eq(rig.recorder.joined.size(), 1)
+
+
+func test_joiner_whose_app_lacks_the_game_gets_a_clear_error_and_leaves_no_trace() -> void:
+	var host: LobbyHostRig = await start_lobby()
+	var rig: LobbyClientRig = LobbyClientRig.new()
+	rig.client = LobbyClient.new(env.make_transport(), APP)
+	rig.client.game_validator = func(_game_id: String) -> bool: return false
+	rig.recorder = LobbyClientRecorder.new(rig.client)
+	track(rig.client, rig.client.session.transport)
+	rig.client.join(host.address, "Asha", env.join_config())
+	assert_true(await pump(func() -> bool: return rig.recorder.has_outcome(), 3000))
+	assert_eq(rig.recorder.joined.size(), 0, "never reported as joined")
+	var failure: Dictionary = rig.recorder.join_failures[0]
+	assert_eq(failure["code"], ErrorCodes.UNKNOWN_GAME)
+	assert_string_contains(failure["message"], GAME)
+	assert_eq(failure["host_info"]["game_id"], GAME)
+	assert_eq(failure["host_info"]["app_version"], APP)
+	assert_true(await pump(func() -> bool: return host.state()["slots"].size() == 1), "the seat is given back")
+	assert_false(rig.client.session.transport.is_active())
+
+
+func test_joiner_can_still_insist_on_a_game() -> void:
+	var host: LobbyHostRig = await start_lobby()
+	var rig: LobbyClientRig = LobbyClientRig.new()
+	rig.client = LobbyClient.new(env.make_transport(), APP, "other_game")
+	rig.recorder = LobbyClientRecorder.new(rig.client)
+	track(rig.client, rig.client.session.transport)
+	rig.client.join(host.address, "Asha", env.join_config())
+	assert_true(await pump(func() -> bool: return rig.recorder.has_outcome(), 3000))
+	assert_eq(rig.recorder.join_failures[0]["code"], ErrorCodes.WRONG_GAME)
+	assert_eq(rig.recorder.join_failures[0]["host_info"]["game_id"], GAME)
+
+
+func test_rejoin_does_not_need_the_game_id() -> void:
+	var host: LobbyHostRig = await start_lobby()
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	var identity: Dictionary = a.client.identity()
+	a.client.session.transport.leave()
+	await pump(func() -> bool: return host.state()["slots"].size() == 1)
+	var a2: LobbyClientRig = await join_player(host, "Asha", identity)
+	assert_eq(a2.recorder.joined, [identity["player_id"]] as Array[String])

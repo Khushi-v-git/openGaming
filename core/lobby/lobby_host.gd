@@ -10,11 +10,15 @@ extends RefCounted
 signal state_changed(state: Dictionary)
 signal game_started(state: Dictionary)
 signal game_message(player_id: String, message: Dictionary)  # non-lobby traffic, for the game layer
+signal hosting(info: Dictionary)  # live: info.address is what to share
+signal host_failed(reason: String)
 signal closed()
 
 var session: HostSession
 var state: Dictionary
 var local_player_id: String
+## What the transport reported when hosting went live ({address, kind, ...}); {} until then.
+var session_info: Dictionary = {}
 ## Optional: (player_id) -> Dictionary, the game's view_for() for that player. Used to
 ## resend the full current game state to a player who rejoins mid-game (rules 7, 9).
 var game_view_provider: Callable = Callable()
@@ -36,9 +40,12 @@ func _init(transport: Transport, app_version: String, game_id: String, host_name
 	session.player_disconnected.connect(_on_player_disconnected)
 	session.player_message.connect(_on_player_message)
 	session.closed.connect(_on_session_closed)
+	session.hosting.connect(_on_hosting)
+	session.host_failed.connect(_on_host_failed)
 
 
-## Starts listening/registering. Returns the transport's session info (address etc.).
+## Starts listening/registering. Returns a failure if hosting could not start;
+## otherwise `hosting` (with the address to share) or `host_failed` follows.
 func start(transport_config: Dictionary) -> Dictionary:
 	_started = true
 	return session.start(transport_config)
@@ -56,7 +63,7 @@ func snapshot(game_state: Dictionary = {}) -> Dictionary:
 func restore(saved: Dictionary, as_player_id: String = "") -> Dictionary:
 	if _started:
 		return CoreResult.failure(ErrorCodes.WRONG_PHASE, "A save can only be loaded before hosting starts.")
-	var checked: Dictionary = SessionSnapshot.validate(saved, _app_version, _game_id)
+	var checked: Dictionary = SessionSnapshot.validate(saved, _game_id)
 	if not CoreResult.is_ok(checked):
 		return checked
 	var host_id: String = as_player_id if not as_player_id.is_empty() else str(saved["lobby"]["host_player_id"])
@@ -83,7 +90,21 @@ func close(reason: String = "The host closed the session.") -> void:
 	session.close(reason)
 
 
+## Stops immediately without telling anyone (e.g. cancelling before hosting went live).
+func close_now() -> void:
+	session.close_now()
+
+
 # --- session events --------------------------------------------------------------
+
+func _on_host_failed(reason: String) -> void:
+	host_failed.emit(reason)
+
+
+func _on_hosting(info: Dictionary) -> void:
+	session_info = info
+	hosting.emit(info)
+
 
 func _admission(player_name: String) -> Dictionary:
 	return LobbyLogic.can_join(state, player_name)
@@ -149,6 +170,8 @@ func _on_session_closed() -> void:
 	session.player_disconnected.disconnect(_on_player_disconnected)
 	session.player_message.disconnect(_on_player_message)
 	session.closed.disconnect(_on_session_closed)
+	session.hosting.disconnect(_on_hosting)
+	session.host_failed.disconnect(_on_host_failed)
 	closed.emit()
 
 

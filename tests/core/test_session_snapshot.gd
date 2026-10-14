@@ -28,7 +28,7 @@ func _sample() -> Dictionary:
 
 
 func _error_of(snapshot: Dictionary) -> String:
-	return CoreResult.error_code(SessionSnapshot.validate(snapshot, APP, GAME))
+	return CoreResult.error_code(SessionSnapshot.validate(snapshot, GAME))
 
 
 # --- capture ---------------------------------------------------------------------
@@ -36,9 +36,9 @@ func _error_of(snapshot: Dictionary) -> String:
 func test_capture_is_plain_data_with_everything_needed_to_resume() -> void:
 	var snap: Dictionary = _sample()
 	assert_true(Envelope.is_plain_data(snap))
-	assert_eq(snap["snapshot_version"], SessionSnapshot.VERSION)
+	assert_eq(snap["save_version"], SessionSnapshot.SAVE_VERSION)
+	assert_eq(snap["saved_by_app_version"], APP)
 	assert_eq(snap["game_id"], GAME)
-	assert_eq(snap["app_version"], APP)
 	assert_eq(snap["lobby"]["phase"], LobbyLogic.PHASE_IN_GAME)
 	assert_eq(snap["players"]["players"].size(), 3)
 	assert_eq(snap["game_state"], {"turn": 3, "positions": {"p1": 5, "p2": 12}})
@@ -78,7 +78,7 @@ func test_text_round_trip_validates_and_matches() -> void:
 	var parsed: Dictionary = SessionSnapshot.from_text(SessionSnapshot.to_text(snap))
 	assert_true(CoreResult.is_ok(parsed))
 	assert_eq(parsed["snapshot"], snap)
-	assert_true(CoreResult.is_ok(SessionSnapshot.validate(parsed["snapshot"], APP, GAME)))
+	assert_true(CoreResult.is_ok(SessionSnapshot.validate(parsed["snapshot"], GAME)))
 
 
 func test_from_text_rejects_garbage() -> void:
@@ -118,17 +118,43 @@ func test_missing_and_corrupt_files() -> void:
 # --- validation ------------------------------------------------------------------
 
 func test_valid_snapshot_passes() -> void:
-	assert_true(CoreResult.is_ok(SessionSnapshot.validate(_sample(), APP, GAME)))
+	assert_true(CoreResult.is_ok(SessionSnapshot.validate(_sample(), GAME)))
 
 
-func test_other_game_or_version_is_refused() -> void:
-	assert_eq(CoreResult.error_code(SessionSnapshot.validate(_sample(), APP, "other")), ErrorCodes.WRONG_GAME)
-	assert_eq(CoreResult.error_code(SessionSnapshot.validate(_sample(), "2.0.0", GAME)), ErrorCodes.APP_VERSION_MISMATCH)
+func test_other_game_is_refused() -> void:
+	assert_eq(CoreResult.error_code(SessionSnapshot.validate(_sample(), "other")), ErrorCodes.WRONG_GAME)
+
+
+func test_the_app_version_does_not_matter_only_the_save_version() -> void:
+	var snap: Dictionary = _sample()
+	snap["saved_by_app_version"] = "0.0.1-ancient"
+	assert_true(CoreResult.is_ok(SessionSnapshot.validate(snap, GAME)), "app upgrades must not orphan saves")
+
+
+func test_newer_or_older_save_formats_are_refused_clearly_without_migration() -> void:
+	var newer: Dictionary = _sample()
+	newer["save_version"] = SessionSnapshot.SAVE_VERSION + 1
+	var r: Dictionary = SessionSnapshot.validate(newer, GAME)
+	assert_eq(CoreResult.error_code(r), ErrorCodes.UNSUPPORTED_SAVE)
+	assert_string_contains(str(r["error"]["message"]), "newer")
+	var older: Dictionary = _sample()
+	older["save_version"] = 0
+	var r2: Dictionary = SessionSnapshot.validate(older, GAME)
+	assert_eq(CoreResult.error_code(r2), ErrorCodes.UNSUPPORTED_SAVE)
+	assert_string_contains(str(r2["error"]["message"]), "old format")
+
+
+func test_missing_or_non_numeric_save_version_is_malformed() -> void:
+	var missing: Dictionary = _sample()
+	missing.erase("save_version")
+	assert_eq(_error_of(missing), ErrorCodes.MALFORMED)
+	var text: Dictionary = _sample()
+	text["save_version"] = "1"
+	assert_eq(_error_of(text), ErrorCodes.MALFORMED)
 
 
 func test_damaged_snapshots_are_refused_not_crashed_on() -> void:
 	var mutations: Dictionary = {
-		"future format": func(s: Dictionary) -> void: s["snapshot_version"] = 99,
 		"no lobby": func(s: Dictionary) -> void: s.erase("lobby"),
 		"no players": func(s: Dictionary) -> void: s.erase("players"),
 		"no game_state": func(s: Dictionary) -> void: s.erase("game_state"),

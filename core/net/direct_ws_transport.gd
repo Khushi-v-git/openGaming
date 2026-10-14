@@ -40,6 +40,7 @@ var _max_connections: int = 32
 var _ws: WebSocketPeer = null
 var _join_deadline: int = 0
 var _early_failure: String = ""
+var _ready_info: Dictionary = {}  # emitted as session_ready from the next poll()
 
 
 func host_session(config: Dictionary) -> Dictionary:
@@ -59,12 +60,13 @@ func host_session(config: Dictionary) -> Dictionary:
 	var shown_host: String = bind_address
 	if bind_address == "*" or bind_address == "0.0.0.0":
 		shown_host = _guess_lan_address()
-	return CoreResult.success({
+	_ready_info = {
 		"address": "%s:%d" % [shown_host, bound_port],
 		"kind": "direct_ws",
 		"port": bound_port,
 		"lan_addresses": _local_ipv4_addresses(),
-	})
+	}
+	return CoreResult.success()
 
 
 func join_session(address_or_code: String, config: Dictionary) -> void:
@@ -88,6 +90,7 @@ func join_session(address_or_code: String, config: Dictionary) -> void:
 func leave() -> void:
 	_epoch += 1
 	_early_failure = ""
+	_ready_info = {}
 	match _role:
 		Role.HOST:
 			for peer_id: Variant in _peers.keys():
@@ -135,6 +138,12 @@ func disconnect_peer(peer_id: int) -> void:
 
 
 func poll() -> void:
+	if not _ready_info.is_empty():
+		var info: Dictionary = _ready_info
+		_ready_info = {}
+		session_ready.emit(info)
+		if not is_active():
+			return
 	if not _early_failure.is_empty():
 		var reason: String = _early_failure
 		_early_failure = ""
