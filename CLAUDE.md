@@ -59,6 +59,20 @@ docs/
    (WebSocket/TCP for direct and tunnel use, a relay client later) are
    interchangeable behind the interface.
 
+3a. **Relay-ready transport.** The transport interface is expressed as
+    session operations, not socket operations:
+    - `host_session(config) -> session_info` (returns the address or room code
+      to share)
+    - `join_session(address_or_code, config)`
+    - `leave()`, plus the send/broadcast/event methods from rule 3.
+    A direct implementation listens on a port. A relay implementation connects
+    outbound to a relay and registers a room. Game, lobby and session code see
+    no difference. Peers are identified by an opaque `peer_id` assigned by the
+    transport, never by IP or socket. The active transport is chosen by
+    configuration, never by an import in game or lobby code. The host remains
+    the single authority regardless of transport: a relay only forwards
+    messages.
+
 4. **Messages are plain data.** Every message is a JSON-serializable dict with
    `type`, `protocol_version` and a payload. No engine objects or binary blobs.
    Do not use Godot's high-level @rpc for game logic, because it couples the
