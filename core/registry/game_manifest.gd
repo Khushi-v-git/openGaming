@@ -13,7 +13,9 @@ extends RefCounted
 ##   "min_active_players": 2,              optional: the fewest players present the game can
 ##                                         run with when someone drops; default = min_players
 ##   "rules_class": "res://games/<id>/rules/<file>.gd",   extends RefCounted (rule 2)
-##   "ui_scene": "res://games/<id>/ui/<file>.tscn"
+##   "ui_scene": "res://games/<id>/ui/<file>.tscn"   optional while the game is in
+##                                         development; without it the game is registered but
+##                                         not playable, and the home screen leaves it out
 ## }
 ##
 ## Every path must be inside the game's own folder and must exist, so a manifest can
@@ -55,9 +57,15 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 	var rules: Dictionary = _check_path(data, "rules_class", game_dir, ["gd"])
 	if not CoreResult.is_ok(rules):
 		return rules
-	var scene: Dictionary = _check_path(data, "ui_scene", game_dir, ["tscn", "scn"])
-	if not CoreResult.is_ok(scene):
-		return scene
+	var scene_path: String = ""
+	if data.has("ui_scene"):
+		if typeof(data["ui_scene"]) != TYPE_STRING:
+			return _bad("'ui_scene' must be a path or left out.")
+		if data["ui_scene"] != "":
+			var scene: Dictionary = _check_path(data, "ui_scene", game_dir, ["tscn", "scn"])
+			if not CoreResult.is_ok(scene):
+				return scene
+			scene_path = scene["path"]
 	var rules_check: Dictionary = _check_rules_script(rules["path"])
 	if not CoreResult.is_ok(rules_check):
 		return rules_check
@@ -71,8 +79,13 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 		"max_players": max_players,
 		"min_active_players": min_active,
 		"rules_class": rules["path"],
-		"ui_scene": scene["path"],
+		"ui_scene": scene_path,  # "" = no UI yet
 	}})
+
+
+## True if the game has a UI scene, i.e. it can actually be played.
+static func has_ui(manifest: Dictionary) -> bool:
+	return str(manifest.get("ui_scene", "")) != ""
 
 
 static func supports_player_count(manifest: Dictionary, count: int) -> bool:

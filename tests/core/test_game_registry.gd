@@ -57,7 +57,7 @@ func test_bad_player_counts_are_refused() -> void:
 
 
 func test_missing_fields_are_refused() -> void:
-	for field: String in ["id", "display_name", "icon", "min_players", "max_players", "rules_class", "ui_scene"]:
+	for field: String in ["id", "display_name", "icon", "min_players", "max_players", "rules_class"]:
 		var data: Dictionary = _alpha()
 		data.erase(field)
 		assert_eq(_error_of(data), GameManifest.INVALID_MANIFEST, "missing %s" % field)
@@ -114,7 +114,7 @@ func test_scan_finds_good_games_and_reports_broken_ones_separately() -> void:
 	var ids: Array[String] = []
 	for m: Dictionary in scanned["manifests"]:
 		ids.append(m["id"])
-	assert_eq(ids, ["alpha", "beta"] as Array[String])
+	assert_eq(ids, ["alpha", "beta", "no_ui"] as Array[String])
 	var bad_paths: Array[String] = []
 	for e: Dictionary in scanned["errors"]:
 		bad_paths.append((e["path"] as String).get_base_dir().get_file())
@@ -160,9 +160,9 @@ func _loaded() -> GameRegistry:
 func test_load_from_registers_valid_games() -> void:
 	var registry: GameRegistry = GameRegistry.new()
 	var result: Dictionary = registry.load_from(FIXTURES)
-	assert_eq(result["registered"], ["alpha", "beta"] as Array[String])
+	assert_eq(result["registered"], ["alpha", "beta", "no_ui"] as Array[String])
 	assert_eq(result["errors"].size(), 4)
-	assert_eq(registry.count(), 2)
+	assert_eq(registry.count(), 3)
 
 
 func test_has_and_get_manifest() -> void:
@@ -181,8 +181,8 @@ func test_all_is_sorted_by_display_name() -> void:
 	var names: Array[String] = []
 	for m: Dictionary in registry.all():
 		names.append(m["display_name"])
-	assert_eq(names, ["Apple Cards", "Zebra Race"] as Array[String])
-	assert_eq(registry.ids(), ["beta", "alpha"] as Array[String])
+	assert_eq(names, ["Apple Cards", "Mango Draft", "Zebra Race"] as Array[String])
+	assert_eq(registry.ids(), ["beta", "no_ui", "alpha"] as Array[String])
 
 
 func test_returned_manifests_are_copies() -> void:
@@ -196,7 +196,7 @@ func test_duplicate_ids_are_refused() -> void:
 	var registry: GameRegistry = _loaded()
 	var again: Dictionary = registry.register(registry.get_manifest("alpha"))
 	assert_eq(CoreResult.error_code(again), GameManifest.DUPLICATE_GAME)
-	assert_eq(registry.count(), 2)
+	assert_eq(registry.count(), 3)
 	var second_load: Dictionary = registry.load_from(FIXTURES)
 	assert_eq(second_load["registered"].size(), 0)
 	var codes: Array[String] = []
@@ -272,3 +272,55 @@ func test_bad_min_active_players_are_refused() -> void:
 		var data: Dictionary = _alpha()  # min_players 2
 		data["min_active_players"] = bad
 		assert_eq(_error_of(data), GameManifest.INVALID_MANIFEST, "min_active_players %s" % str(bad))
+
+
+# --- ui_scene is optional while a game is in development ------------------------------
+
+func test_a_manifest_without_ui_scene_is_valid_and_not_playable() -> void:
+	var data: Dictionary = _alpha()
+	data.erase("ui_scene")
+	var r: Dictionary = GameManifest.validate(data, ALPHA_DIR)
+	assert_true(CoreResult.is_ok(r), str(r))
+	assert_eq(r["manifest"]["ui_scene"], "")
+	assert_false(GameManifest.has_ui(r["manifest"]))
+
+
+func test_an_empty_ui_scene_means_none() -> void:
+	var data: Dictionary = _alpha()
+	data["ui_scene"] = ""
+	var r: Dictionary = GameManifest.validate(data, ALPHA_DIR)
+	assert_true(CoreResult.is_ok(r))
+	assert_eq(r["manifest"]["ui_scene"], "")
+
+
+func test_a_ui_scene_that_is_given_is_still_checked() -> void:
+	var missing: Dictionary = _alpha()
+	missing["ui_scene"] = ALPHA_DIR + "/nope.tscn"
+	assert_eq(_error_of(missing), GameManifest.INVALID_MANIFEST)
+	var elsewhere: Dictionary = _alpha()
+	elsewhere["ui_scene"] = "res://core/lobby/lobby_scene.tscn"
+	assert_eq(_error_of(elsewhere), GameManifest.INVALID_MANIFEST)
+	for bad: Variant in [5, true, ["a"], {}]:
+		var data: Dictionary = _alpha()
+		data["ui_scene"] = bad
+		assert_eq(_error_of(data), GameManifest.INVALID_MANIFEST, "ui_scene %s" % str(bad))
+
+
+func test_the_home_screen_list_only_has_games_with_a_ui() -> void:
+	var registry: GameRegistry = _loaded()
+	assert_eq(registry.count(), 3)
+	var ids: Array[String] = []
+	for manifest: Dictionary in registry.playable():
+		ids.append(manifest["id"])
+	assert_eq(ids, ["beta", "alpha"] as Array[String], "no_ui is registered but not listed")
+	assert_true(registry.has("no_ui"))
+	assert_false(registry.has_ui("no_ui"))
+	assert_true(registry.has_ui("alpha"))
+	assert_false(registry.has_ui("nope"))
+
+
+func test_a_game_without_ui_still_has_rules_and_no_scene() -> void:
+	var registry: GameRegistry = _loaded()
+	assert_not_null(registry.create_rules("no_ui"))
+	assert_null(registry.load_ui_scene("no_ui"))
+	assert_true(registry.supports_player_count("no_ui", 3))

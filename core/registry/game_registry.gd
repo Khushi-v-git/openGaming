@@ -58,6 +58,19 @@ func all() -> Array[Dictionary]:
 	return games
 
 
+## The games the home screen should list: those with a UI scene, sorted like all().
+func playable() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for manifest: Dictionary in all():
+		if GameManifest.has_ui(manifest):
+			out.append(manifest)
+	return out
+
+
+func has_ui(game_id: String) -> bool:
+	return has(game_id) and GameManifest.has_ui(_manifests[game_id])
+
+
 func ids() -> Array[String]:
 	var out: Array[String] = []
 	for manifest: Dictionary in all():
@@ -82,7 +95,7 @@ func create_rules(game_id: String) -> RefCounted:
 
 
 func load_ui_scene(game_id: String) -> PackedScene:
-	if not has(game_id):
+	if not has_ui(game_id):
 		return null
 	return load(_manifests[game_id]["ui_scene"]) as PackedScene
 

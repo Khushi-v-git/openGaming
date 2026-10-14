@@ -1,0 +1,9 @@
+{
+  "id": "no_ui",
+  "display_name": "Mango Draft",
+  "description": "Fixture: no UI scene yet",
+  "icon": "res://tests/fixtures/games/no_ui/icon.svg",
+  "min_players": 2,
+  "max_players": 3,
+  "rules_class": "res://tests/fixtures/games/no_ui/rules.gd"
+}
