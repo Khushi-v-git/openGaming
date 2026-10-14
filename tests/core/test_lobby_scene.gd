@@ -10,6 +10,7 @@ func before_each() -> void:
 
 
 func after_each() -> void:
+	await get_tree().process_frame  # rows the scene queued for freeing are gone before the orphan check
 	MessageLog.enabled = OS.is_debug_build()
 
 
