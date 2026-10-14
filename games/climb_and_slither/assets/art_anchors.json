@@ -1,0 +1,22 @@
+{
+  "_comment": "Anchor points in each sprite's own pixel coordinates (origin top-left). A snake's tail anchor is the tip of its tail and its head anchor is the centre of the head circle. For ladders, top_anchor is the centre of the top rung (in the top piece) and foot_anchor is the centre of the feet pad (in the bottom piece). body_width is the widest part of the snake body in pixels. If the art changes, update this file; tests check every anchor lies inside its image.",
+  "snakes": {
+    "snake-forest":     {"size": [1300, 440], "tail": [100, 220], "head": [1118.5, 238.2], "body_width": 68},
+    "snake-indigo":     {"size": [1600, 440], "tail": [100, 220], "head": [1418.3, 201.5], "body_width": 68},
+    "snake-rose":       {"size": [1300, 440], "tail": [100, 220], "head": [1118.5, 238.2], "body_width": 68},
+    "snake-saffron":    {"size": [1000, 440], "tail": [100, 220], "head": [819.0, 202.2],  "body_width": 68},
+    "snake-terracotta": {"size": [1600, 440], "tail": [100, 220], "head": [1418.3, 201.5], "body_width": 68}
+  },
+  "ladder": {
+    "width": 240,
+    "top_size": [240, 120],
+    "segment_size": [240, 120],
+    "bottom_size": [240, 144],
+    "top_anchor": [120, 60],
+    "foot_anchor": [120, 109]
+  },
+  "ladder_sets": {
+    "orange": {"top": "ladder-top", "segment": "ladder-segment", "bottom": "ladder-bottom"},
+    "teal": {"top": "ladder-teal-top", "segment": "ladder-teal-segment", "bottom": "ladder-teal-bottom"}
+  }
+}
