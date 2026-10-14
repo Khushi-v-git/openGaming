@@ -126,7 +126,7 @@ func _check_event_properties(before: Dictionary, result: Dictionary) -> void:
 func test_events_describe_every_roll_of_many_games() -> void:
 	var settings_options: Array[Dictionary] = [
 		{}, {"exact_finish": true}, {"extra_turn_on_six": true}, {"dice_count": 2},
-		{"exact_finish": true, "extra_turn_on_six": true, "dice_count": 2},
+		{"exact_finish": true, "extra_turn_on_six": true},
 	]
 	for game_index: int in 20:
 		var settings: Dictionary = settings_options[game_index % settings_options.size()]
@@ -194,7 +194,7 @@ func _ui_follow(ui: Dictionary, events: Array) -> void:
 func test_a_ui_following_only_the_events_always_shows_the_true_game() -> void:
 	var settings_options: Array[Dictionary] = [
 		{}, {"exact_finish": true}, {"extra_turn_on_six": true}, {"dice_count": 2},
-		{"exact_finish": true, "extra_turn_on_six": true, "dice_count": 2},
+		{"exact_finish": true, "extra_turn_on_six": true},
 	]
 	for game_index: int in 25:
 		var players: Array = ["p1", "p2", "p3", "p4"].slice(0, 2 + game_index % 3)

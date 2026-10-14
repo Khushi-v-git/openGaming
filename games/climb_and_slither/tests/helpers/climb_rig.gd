@@ -71,3 +71,30 @@ static func event_types(events: Array) -> Array[String]:
 	for event: Dictionary in events:
 		out.append(event["type"])
 	return out
+
+
+## A random but valid board, for fuzzing: sizes 15 to 140, random snakes and ladders that obey
+## every board rule (unique starts, none on square 1 or the last square, right direction, no
+## jump ending on another's start). Shared end squares happen naturally.
+static func random_board(prng: Prng) -> Dictionary:
+	var columns: int = [5, 6, 8, 10][prng.range_int(0, 3)]
+	var rows: int = prng.range_int(3, 14)
+	var size: int = columns * rows
+	var starts: Dictionary = {}
+	var jumps: Array[Dictionary] = []  # {kind, from, to}
+	var attempts: int = prng.range_int(0, maxi(1, size / 5))
+	for _i: int in attempts:
+		var from: int = prng.range_int(2, size - 1)
+		if starts.has(from):
+			continue
+		var snake: bool = prng.range_int(0, 1) == 0
+		var to: int = prng.range_int(1, from - 1) if snake else prng.range_int(from + 1, size)
+		starts[from] = true
+		jumps.append({"snake": snake, "from": from, "to": to})
+	var snakes: Array = []
+	var ladders: Array = []
+	for jump: Dictionary in jumps:
+		if starts.has(jump["to"]):
+			continue  # would chain: drop it
+		(snakes if jump["snake"] else ladders).append({"from": jump["from"], "to": jump["to"]})
+	return board(snakes, ladders, size, columns)

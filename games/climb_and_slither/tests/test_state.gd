@@ -82,8 +82,21 @@ func test_a_bad_board_or_bad_settings_are_refused() -> void:
 
 
 func test_settings_given_to_new_game_live_in_the_state() -> void:
-	var state: Dictionary = _new(["p1", "p2"], {"exact_finish": true, "dice_count": 2})
-	assert_eq(state["settings"], {"exact_finish": true, "extra_turn_on_six": false, "dice_count": 2})
+	var state: Dictionary = _new(["p1", "p2"], {"exact_finish": true, "dice_count": 1})
+	assert_eq(state["settings"], {"exact_finish": true, "extra_turn_on_six": false, "dice_count": 1})
+	var two_dice: Dictionary = _new(["p1", "p2"], {"extra_turn_on_six": true, "dice_count": 2})
+	assert_eq(two_dice["settings"], {"exact_finish": false, "extra_turn_on_six": true, "dice_count": 2})
+
+
+func test_new_game_refuses_exact_finish_with_two_dice() -> void:
+	assert_eq(CoreResult.error_code(rules.new_game(["p1", "p2"], _board(), {"exact_finish": true, "dice_count": 2}, 1)), ClimbErrors.INVALID_SETTINGS)
+
+
+func test_a_loaded_state_with_that_combination_is_refused_too() -> void:
+	var state: Dictionary = _new(["p1", "p2"])
+	state["settings"]["exact_finish"] = true
+	state["settings"]["dice_count"] = 2
+	assert_eq(CoreResult.error_code(rules.validate_state(state)), ClimbErrors.INVALID_STATE)
 
 
 func test_the_board_in_the_state_is_a_copy() -> void:

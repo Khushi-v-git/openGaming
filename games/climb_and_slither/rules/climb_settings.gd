@@ -9,6 +9,11 @@ extends RefCounted
 ##   extra_turn_on_six   true: after a roll that includes a 6 the same player rolls again
 ##                       (with two dice, either die showing 6 counts). There is no cap.
 ##   dice_count          1 or 2 dice, added together.
+##
+## exact_finish needs dice_count 1. With two dice the smallest total is 2, so a player on the
+## square just before the last could never roll the 1 they need: they could neither finish nor
+## leave, and a game where everyone gets there never ends (the fuzz test found this). That
+## combination is refused instead of silently allowed.
 
 const MAX_DICE: int = 2
 const DIE_SIDES: int = 6
@@ -36,6 +41,8 @@ static func normalize(input: Dictionary) -> Dictionary:
 	var dice: int = settings["dice_count"]
 	if dice < 1 or dice > MAX_DICE:
 		return _bad("'dice_count' must be 1 or %d." % MAX_DICE)
+	if settings["exact_finish"] and dice > 1:
+		return _bad("Exact finish needs a single die: with two dice a player on the square before the last could never finish.")
 	return CoreResult.success({"settings": settings})
 
 

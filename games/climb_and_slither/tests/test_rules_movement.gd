@@ -187,19 +187,20 @@ func test_a_player_needing_one_stays_put_on_every_roll_but_a_one_with_exact_fini
 	assert_eq(_roll(winning)["state"]["winner"], "p1")
 
 
-func test_two_dice_add_up_for_the_exact_finish() -> void:
-	var state: Dictionary = ClimbRig.game([[4, 6]], ["p1", "p2"], {"exact_finish": true, "dice_count": 2}, {"p1": 90}, ClimbRig.board())
+func test_two_dice_overshoot_still_wins_without_exact_finish() -> void:
+	var state: Dictionary = ClimbRig.game([[5, 4]], ["p1", "p2"], {"dice_count": 2}, {"p1": 95}, ClimbRig.board())
+	var result: Dictionary = _roll(state)
+	assert_eq(result["state"]["winner"], "p1")
+	assert_eq(result["state"]["positions"]["p1"], 100)
+	assert_eq(result["events"][0]["total"], 9)
+
+
+func test_two_dice_reaching_the_last_square_exactly_wins() -> void:
+	var state: Dictionary = ClimbRig.game([[4, 6]], ["p1", "p2"], {"dice_count": 2}, {"p1": 90}, ClimbRig.board())
 	var result: Dictionary = _roll(state)
 	assert_eq(result["state"]["winner"], "p1")
 	assert_eq(result["events"][0]["dice"], [4, 6])
 	assert_eq(result["events"][0]["total"], 10)
-
-
-func test_two_dice_overshoot_with_exact_finish_does_not_move() -> void:
-	var state: Dictionary = ClimbRig.game([[5, 4]], ["p1", "p2"], {"exact_finish": true, "dice_count": 2}, {"p1": 95}, ClimbRig.board())
-	var result: Dictionary = _roll(state)
-	assert_eq(result["state"]["positions"]["p1"], 95)
-	assert_true(_types(result).has("overshoot"))
 
 
 func test_the_game_is_over_once_someone_wins() -> void:
