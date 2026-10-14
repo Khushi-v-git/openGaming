@@ -1,0 +1,10 @@
+{
+  "id": "beta",
+  "display_name": "Apple Cards",
+  "description": "Fixture game beta",
+  "icon": "res://tests/fixtures/games/beta/icon.svg",
+  "min_players": 1,
+  "max_players": 2,
+  "rules_class": "res://tests/fixtures/games/beta/rules.gd",
+  "ui_scene": "res://tests/fixtures/games/beta/ui.tscn"
+}

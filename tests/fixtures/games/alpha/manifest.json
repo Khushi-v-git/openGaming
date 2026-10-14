@@ -1,0 +1,10 @@
+{
+  "id": "alpha",
+  "display_name": "Zebra Race",
+  "description": "Fixture game alpha",
+  "icon": "res://tests/fixtures/games/alpha/icon.svg",
+  "min_players": 2,
+  "max_players": 4,
+  "rules_class": "res://tests/fixtures/games/alpha/rules.gd",
+  "ui_scene": "res://tests/fixtures/games/alpha/ui.tscn"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "not_refcounted",
+  "display_name": "Not Refcounted",
+  "description": "Fixture game not_refcounted",
+  "icon": "res://tests/fixtures/games/not_refcounted/icon.svg",
+  "min_players": 2,
+  "max_players": 2,
+  "rules_class": "res://tests/fixtures/games/not_refcounted/rules.gd",
+  "ui_scene": "res://tests/fixtures/games/not_refcounted/ui.tscn"
+}

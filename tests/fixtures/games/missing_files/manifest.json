@@ -1,0 +1,10 @@
+{
+  "id": "missing_files",
+  "display_name": "Missing Files",
+  "description": "Fixture game missing_files",
+  "icon": "res://tests/fixtures/games/missing_files/icon.svg",
+  "min_players": 2,
+  "max_players": 2,
+  "rules_class": "res://tests/fixtures/games/missing_files/rules.gd",
+  "ui_scene": "res://tests/fixtures/games/missing_files/ui.tscn"
+}
