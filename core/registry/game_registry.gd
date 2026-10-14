@@ -100,6 +100,8 @@ func load_ui_scene(game_id: String) -> PackedScene:
 	return load(_manifests[game_id]["ui_scene"]) as PackedScene
 
 
-## For LobbyClient.game_validator.
+## For LobbyClient.game_validator. The lambda holds this registry alive: a plain
+## Callable to a RefCounted method would not, and would break once the registry went out
+## of scope elsewhere.
 func validator() -> Callable:
-	return has
+	return func(game_id: String) -> bool: return has(game_id)

@@ -1,0 +1,10 @@
+{
+  "id": "climb_and_slither",
+  "display_name": "Climb and Slither",
+  "description": "Race to the last square. Ladders lift you up, snakes drop you back down. 2 to 4 players.",
+  "icon": "res://games/climb_and_slither/assets/app-icon-512.svg",
+  "min_players": 2,
+  "max_players": 4,
+  "min_active_players": 2,
+  "rules_class": "res://games/climb_and_slither/rules/climb_and_slither_rules.gd"
+}

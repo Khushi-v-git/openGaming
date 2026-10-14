@@ -324,3 +324,15 @@ func test_a_game_without_ui_still_has_rules_and_no_scene() -> void:
 	assert_not_null(registry.create_rules("no_ui"))
 	assert_null(registry.load_ui_scene("no_ui"))
 	assert_true(registry.supports_player_count("no_ui", 3))
+
+
+func test_the_validator_keeps_working_after_the_registry_variable_is_gone() -> void:
+	var validator: Callable = _make_validator()
+	assert_true(validator.call("alpha"))
+	assert_false(validator.call("nope"))
+
+
+func _make_validator() -> Callable:
+	var registry: GameRegistry = GameRegistry.new()
+	registry.load_from(FIXTURES)
+	return registry.validator()  # the registry local dies when this function returns
