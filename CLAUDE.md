@@ -22,6 +22,7 @@ core/                      shared code, used by every game
   session/                 handshake, reconnect, save/load
   ui/                      shared UI kit (themes, buttons, panels)
   registry/                game registry and manifest loader
+  game/                    game-agnostic play code: game controllers, event timeline
   util/                    small shared helpers (Prng)
   assets/                  shared art, fonts, icons, dice, paper textures
 games/
@@ -35,6 +36,7 @@ games/
 main/                      home screen, game picker, app settings
 tests/
   core/                    tests for core/ (games keep theirs in games/*/tests)
+  main/                    tests for main/
 addons/
   gut/                     GUT test framework (approved addon)
 docs/
@@ -42,7 +44,7 @@ docs/
 - core/ must never import from games/ or main/.
 - A game depends only on core's public interfaces and never on another game.
 - Games register through a manifest (id, display name, icon, min/max players,
-  rules class, UI scene). The home screen is built from the registry. Adding a
+  rules class, UI scene, optional settings scene). The home screen is built from the registry. Adding a
   game must not require editing core/. `ui_scene` is optional in the manifest
   while a game is in development; the home screen lists only games that have
   one.
@@ -191,11 +193,13 @@ docs/
   100 (so no square is both a snake and a ladder start); a jump's end is never
   another jump's start (no chains, no loops); snakes go down and ladders go up.
   Shared end squares are allowed. A landing triggers at most one jump. The
-  last square must be reachable for every allowed dice count: a search from
+  last square must be reachable under every allowed settings combination (one
+  die with exact finish, one die without, two dice without): a search from
   square 0 over dice moves 1 to 6 (one die) and 2 to 12 (two dice), plus the
-  board's jumps, must get there with the strictest rule (an overshoot does not
-  move). So six snake heads in a row, a trap near the start, or a lone free
-  square before the last that two dice cannot finish from, are refused.
+  board's jumps, must get there. With exact finish an overshoot does not move;
+  without it an overshoot lands on the last square. So six snake heads in a
+  row, a trap near the start, or a lone free square before the last that two
+  dice cannot finish from, are refused.
 - House rules are settings, not hardcoded: exact roll needed to finish on 100,
   extra turn on a 6, number of dice. Defaults: exact finish off, extra turn on
   a 6 off, one die. With two dice, "a 6" means either die shows a 6. There is
@@ -218,13 +222,20 @@ docs/
   #2B2A33 (tiny details only). Player colors: red #D64545, blue #3F6FD1, green
   #3FA25A, yellow #E5B93C.
 - Prefer sprites without baked shadows; add shadows in-engine so every game
-  shares the same depth.
-- Fonts must have a free license (OFL / Google Fonts).
+  shares the same depth. Do not add an in-engine shadow to a sprite that
+  already has a baked one.
+- Fonts must have a free license (OFL / Google Fonts). Until one is chosen the
+  engine's default font is used.
 - Keep assets small: export at display size, use OGG not WAV, no oversized
   source files in the repo.
 - UI is built with Godot Control containers (VBox/HBox/Grid/Margin) and scales
   from 1920x1080 down to 1280x720. Design tokens (colors, spacing, radii)
-  live in the shared theme in core/ui.
+  live in the shared theme in core/ui. The one intended exception is a game
+  board: it is a Control that fills the rectangle a container gives it and
+  places its squares, sprites and pawns by math inside it (see
+  `ClimbBoardView`), because board geometry is not a container layout.
+- Starting a rematch or returning to the lobby after a game ends is a host-only
+  decision, like pause and remove (rule 7); clients only see the result.
 
 ## Testing requirements
 - Rules have headless unit tests (no scene, no network). Snakes and Ladders
