@@ -142,12 +142,13 @@ func test_leave_in_open_lobby_removes_slot() -> void:
 	assert_eq(s["slots"].size(), 1)
 
 
-func test_leave_in_game_keeps_slot_marked_left() -> void:
+func test_leave_in_game_keeps_the_seat_and_pauses_for_the_host_to_decide() -> void:
 	var s: Dictionary = _apply_ok(_ready_lobby(), "p1", {"type": "start"})
 	s = _apply_ok(s, "p2", {"type": "leave"})
 	assert_eq(s["slots"].size(), 2)
-	assert_true(s["slots"][1]["left"])
+	assert_false(s["slots"][1]["left"], "not gone for good: the host decides")
 	assert_false(s["slots"][1]["connected"])
+	assert_true(s["paused"])
 
 
 func test_host_cannot_leave() -> void:
@@ -186,9 +187,9 @@ func test_disconnect_in_game_keeps_slot_and_reconnect_restores() -> void:
 	assert_true(s["slots"][1]["connected"])
 
 
-func test_left_player_cannot_reconnect() -> void:
+func test_removed_player_cannot_reconnect() -> void:
 	var s: Dictionary = _apply_ok(_ready_lobby(), "p1", {"type": "start"})
-	s = _apply_ok(s, "p2", {"type": "leave"})
+	s = _apply_ok(s, "p1", {"type": "kick", "player_id": "p2"})
 	assert_eq(_code(s, "p2", {"type": "reconnected"}), ErrorCodes.PLAYER_LEFT)
 
 
@@ -295,7 +296,7 @@ func test_resume_as_another_player_hands_them_the_host_role() -> void:
 
 
 func test_resume_rejects_unknown_or_departed_players_and_leaves_state_alone() -> void:
-	var s: Dictionary = _apply_ok(_in_game_lobby(), "p3", {"type": "leave"})
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p1", {"type": "kick", "player_id": "p3"})
 	var snapshot: Dictionary = s.duplicate(true)
 	assert_eq(CoreResult.error_code(LobbyLogic.resume(s, "p9")), ErrorCodes.UNKNOWN_PLAYER)
 	assert_eq(CoreResult.error_code(LobbyLogic.resume(s, "p3")), ErrorCodes.PLAYER_LEFT)
@@ -306,3 +307,100 @@ func test_resumed_players_can_reconnect() -> void:
 	var resumed: Dictionary = LobbyLogic.resume(_in_game_lobby(), "p1")["state"]
 	var back: Dictionary = _apply_ok(resumed, "p2", {"type": "reconnected"})
 	assert_true(back["slots"][1]["connected"])
+
+
+# --- the host decides: wait, continue, or remove ----------------------------------
+
+func test_a_new_game_is_not_paused() -> void:
+	assert_false(_in_game_lobby()["paused"])
+	assert_false(LobbyLogic.is_paused(_in_game_lobby()))
+	assert_false(LobbyLogic.is_paused(_lobby()), "an open lobby is never paused")
+
+
+func test_a_drop_in_game_pauses_and_keeps_the_seat() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	assert_true(s["paused"])
+	assert_true(LobbyLogic.is_paused(s))
+	assert_eq(LobbyLogic.away_players(s).size(), 1)
+	assert_eq(LobbyLogic.away_players(s)[0]["player_id"], "p2")
+
+
+func test_coming_back_unpauses_when_nobody_else_is_away() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p3", {"type": "disconnected"})
+	s = _apply_ok(s, "p2", {"type": "reconnected"})
+	assert_true(s["paused"], "p3 is still away")
+	s = _apply_ok(s, "p3", {"type": "reconnected"})
+	assert_false(s["paused"])
+	assert_eq(LobbyLogic.away_players(s).size(), 0)
+
+
+func test_host_can_continue_without_waiting_and_the_player_may_still_return() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "set_paused", "paused": false})
+	assert_false(s["paused"])
+	assert_eq(LobbyLogic.away_players(s).size(), 1, "the seat is still theirs")
+	s = _apply_ok(s, "p2", {"type": "reconnected"})
+	assert_true(s["slots"][1]["connected"])
+
+
+func test_another_drop_asks_the_host_again_even_after_continuing() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "set_paused", "paused": false})
+	s = _apply_ok(s, "p3", {"type": "disconnected"})
+	assert_true(s["paused"])
+
+
+func test_host_can_choose_to_wait_again() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "set_paused", "paused": false})
+	s = _apply_ok(s, "p1", {"type": "set_paused", "paused": true})
+	assert_true(s["paused"])
+
+
+func test_removing_the_last_away_player_unpauses() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "kick", "player_id": "p2"})
+	assert_false(s["paused"])
+	assert_true(s["slots"][1]["left"])
+	assert_eq(LobbyLogic.away_players(s).size(), 0)
+
+
+func test_removing_one_of_two_away_players_keeps_waiting_for_the_other() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p3", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "kick", "player_id": "p2"})
+	assert_true(s["paused"])
+
+
+func test_set_paused_rules() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p2", {"type": "disconnected"})
+	assert_eq(_code(s, "p3", {"type": "set_paused", "paused": false}), ErrorCodes.NOT_HOST)
+	assert_eq(_code(s, "p1", {"type": "set_paused", "paused": "no"}), ErrorCodes.BAD_ACTION)
+	assert_eq(_code(s, "p1", {"type": "set_paused"}), ErrorCodes.BAD_ACTION)
+	assert_eq(_code(_ready_lobby(), "p1", {"type": "set_paused", "paused": false}), ErrorCodes.WRONG_PHASE)
+	assert_eq(_code(_in_game_lobby(), "p1", {"type": "set_paused", "paused": true}), ErrorCodes.NOTHING_TO_WAIT_FOR)
+
+
+func test_set_paused_is_a_player_action_the_host_may_send_over_the_wire() -> void:
+	assert_true(LobbyLogic.PLAYER_ACTIONS.has("set_paused"))
+
+
+func test_open_lobby_drops_never_pause() -> void:
+	var s: Dictionary = _apply_ok(_ready_lobby(), "p2", {"type": "disconnected"})
+	assert_false(s["paused"])
+
+
+func test_resuming_a_save_waits_for_everyone_who_is_offline() -> void:
+	var resumed: Dictionary = LobbyLogic.resume(_in_game_lobby(), "p1")["state"]
+	assert_true(resumed["paused"])
+	var open_resumed: Dictionary = LobbyLogic.resume(_ready_lobby(), "p1")["state"]
+	assert_false(open_resumed["paused"], "an open lobby has nothing to pause")
+
+
+func test_older_saved_states_without_paused_still_work() -> void:
+	var s: Dictionary = _in_game_lobby()
+	s.erase("paused")
+	assert_false(LobbyLogic.is_paused(s))
+	var after: Dictionary = _apply_ok(s, "p2", {"type": "disconnected"})
+	assert_true(after["paused"])

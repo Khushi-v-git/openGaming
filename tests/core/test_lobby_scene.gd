@@ -483,3 +483,124 @@ func test_connecting_view_also_fits() -> void:
 	assert_true(scene.connecting_view.visible)
 	await get_tree().process_frame
 	_assert_fits(viewport, scene, "connecting view")
+
+
+# --- a guest comes back and the host decides ---------------------------------------
+
+## A started game with a host and one guest ("Asha"); then Asha's connection dies.
+func _started_game_with_asha_dropped() -> Array[LobbyScene]:
+	var pair: Array[LobbyScene] = await _host_and_guest()
+	var host: LobbyScene = pair[0]
+	var guest: LobbyScene = pair[1]
+	guest.ready_button.button_pressed = true
+	await _until(func() -> bool: return not host.start_button.disabled)
+	host.start_button.pressed.emit()
+	await _until(func() -> bool: return guest.ready_button.disabled)
+	guest._client.session.transport.leave()  # the app closed
+	assert_true(await _until(func() -> bool: return _row_text(host, 1).ends_with("Disconnected")))
+	return pair
+
+
+func test_the_host_sees_a_pause_notice_and_can_continue_or_wait_again() -> void:
+	var pair: Array[LobbyScene] = await _started_game_with_asha_dropped()
+	var host: LobbyScene = pair[0]
+	assert_true(host.notice_label.visible)
+	assert_string_contains(host.notice_label.text, "paused")
+	assert_string_contains(host.notice_label.text, "Asha")
+	assert_true(host.continue_button.visible)
+	assert_false(host.wait_button.visible)
+	host.continue_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return host.wait_button.visible))
+	assert_false(host.continue_button.visible)
+	assert_string_contains(host.notice_label.text, "continuing without")
+	host.wait_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return host.continue_button.visible))
+
+
+func test_an_absent_player_can_be_removed_by_the_host_in_a_started_game() -> void:
+	var pair: Array[LobbyScene] = await _started_game_with_asha_dropped()
+	var host: LobbyScene = pair[0]
+	var row: HBoxContainer = host.players_box.get_child(1)
+	assert_eq((row.get_child(2) as Button).text, "Remove")
+	(row.get_child(2) as Button).pressed.emit()
+	assert_true(await _until(func() -> bool: return not host.notice_label.visible), "nobody left to wait for")
+	assert_eq(host.players_box.get_child(1).get_child_count(), 2, "no Remove button for a player who is already gone")
+
+
+func test_a_guest_whose_app_restarted_asks_and_the_host_lets_them_in() -> void:
+	var pair: Array[LobbyScene] = await _started_game_with_asha_dropped()
+	var host: LobbyScene = pair[0]
+	var back: LobbyScene = _make_scene("Asha")  # a fresh app: same name, no saved identity
+	back.address_edit.text = host.shared_address
+	back.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return host.claims_box.get_child_count() == 1))
+	var row: HBoxContainer = host.claims_box.get_child(0)
+	assert_eq((row.get_child(0) as Label).text, "Asha wants to rejoin")
+	assert_eq((row.get_child(1) as Button).text, "Let in")
+	assert_eq((row.get_child(2) as Button).text, "Decline")
+	assert_true(await _until(func() -> bool: return back.connecting_label.text.contains("host to let you back in")))
+	assert_true(back.connecting_view.visible)
+	assert_true(back.cancel_button.visible)
+	(row.get_child(1) as Button).pressed.emit()
+	assert_true(await _until(func() -> bool: return back.lobby_view.visible and host.claims_box.get_child_count() == 0))
+	assert_eq(_row_text(host, 1), "Asha | Ready", "the seat kept its state")
+	assert_false(host.notice_label.visible, "everyone is back")
+	assert_eq(host.players_box.get_child_count(), 2, "same seat, no duplicate")
+
+
+func test_the_host_can_decline_and_the_guest_is_told() -> void:
+	var pair: Array[LobbyScene] = await _started_game_with_asha_dropped()
+	var host: LobbyScene = pair[0]
+	var back: LobbyScene = _make_scene("Asha")
+	back.address_edit.text = host.shared_address
+	back.join_button.pressed.emit()
+	await _until(func() -> bool: return host.claims_box.get_child_count() == 1)
+	((host.claims_box.get_child(0) as HBoxContainer).get_child(2) as Button).pressed.emit()
+	assert_true(await _until(func() -> bool: return back.start_view.visible and back.status_label.text != ""))
+	assert_string_contains(back.status_label.text, "did not let you back in")
+	assert_eq(host.claims_box.get_child_count(), 0)
+	assert_true(host.notice_label.visible, "the seat is still waiting")
+
+
+func test_a_waiting_guest_can_cancel_and_the_request_disappears() -> void:
+	var pair: Array[LobbyScene] = await _started_game_with_asha_dropped()
+	var host: LobbyScene = pair[0]
+	var back: LobbyScene = _make_scene("Asha")
+	back.address_edit.text = host.shared_address
+	back.join_button.pressed.emit()
+	await _until(func() -> bool: return host.claims_box.get_child_count() == 1)
+	back.cancel_button.pressed.emit()
+	assert_true(back.start_view.visible)
+	assert_true(await _until(func() -> bool: return host.claims_box.get_child_count() == 0))
+
+
+func test_the_busiest_host_screen_still_fits_at_1280x720() -> void:
+	# started game, four players with long names, one away, a rejoin request waiting,
+	# the pause notice and its button: the tallest the lobby screen gets
+	var made: Array = await _in_viewport(Vector2i(1280, 720), "H".repeat(Handshake.MAX_NAME_LENGTH))
+	var viewport: SubViewport = made[0]
+	var host: LobbyScene = made[1]
+	await _fill_lobby(host)
+	var guests: Array[LobbyScene] = []
+	for i: int in 3:
+		var guest: LobbyScene = _make_scene("G".repeat(Handshake.MAX_NAME_LENGTH - 1) + str(i))
+		guest.address_edit.text = host.shared_address
+		guest.join_button.pressed.emit()
+		guests.append(guest)
+	assert_true(await _until(func() -> bool: return host.players_box.get_child_count() == 4))
+	for guest: LobbyScene in guests:
+		guest.ready_button.button_pressed = true
+	assert_true(await _until(func() -> bool: return not host.start_button.disabled))
+	host.start_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return guests[0].ready_button.disabled))
+	var away_name: String = "G".repeat(Handshake.MAX_NAME_LENGTH - 1) + "0"
+	guests[0]._client.session.transport.leave()
+	assert_true(await _until(func() -> bool: return host.notice_label.visible))
+	var back: LobbyScene = _make_scene(away_name)
+	back.address_edit.text = host.shared_address
+	back.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return host.claims_box.get_child_count() == 1))
+	await get_tree().process_frame
+	await get_tree().process_frame
+	assert_true(host.continue_button.visible)
+	_assert_fits(viewport, host, "busiest host screen")

@@ -10,6 +10,7 @@ const MAX_MESSAGE_BYTES: int = 65536
 const T_HELLO: String = "hello"
 const T_WELCOME: String = "welcome"
 const T_REJECT: String = "reject"
+const T_PENDING: String = "pending"  # host > client: not decided yet, the host is being asked
 # Liveness
 const T_PING: String = "ping"
 const T_PONG: String = "pong"

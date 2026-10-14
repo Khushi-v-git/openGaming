@@ -8,9 +8,11 @@ var connect_failed: Array[String] = []
 var host_lost: Array[String] = []
 var ended: Array[Dictionary] = []  # {code, message}
 var messages: Array[Dictionary] = []
+var waiting: Array[String] = []
 
 
 func _init(session: ClientSession) -> void:
+	session.waiting_for_host.connect(func(message: String) -> void: waiting.append(message))
 	session.connected.connect(func(welcome: Dictionary) -> void: connected.append(welcome))
 	session.rejected.connect(func(code: String, message: String, host_info: Dictionary) -> void: rejected.append({"code": code, "message": message, "host_info": host_info}))
 	session.connect_failed.connect(func(reason: String) -> void: connect_failed.append(reason))

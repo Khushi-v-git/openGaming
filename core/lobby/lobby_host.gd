@@ -12,6 +12,8 @@ signal game_started(state: Dictionary)
 signal game_message(player_id: String, message: Dictionary)  # non-lobby traffic, for the game layer
 signal hosting(info: Dictionary)  # live: info.address is what to share
 signal host_failed(reason: String)
+signal rejoin_requested(player_id: String, player_name: String)  # a returning player waits for the host to let them in
+signal rejoin_request_cancelled(player_id: String)
 signal closed()
 
 var session: HostSession
@@ -36,6 +38,9 @@ func _init(transport: Transport, app_version: String, game_id: String, host_name
 	state = LobbyLogic.create(game_id, min_players, max_players, local_player_id, host_name)
 	session.admission_policy = _admission
 	session.rejoin_policy = _rejoin_policy
+	session.claim_policy = _claim_policy
+	session.claim_requested.connect(_on_claim_requested)
+	session.claim_cancelled.connect(_on_claim_cancelled)
 	session.player_joined.connect(_on_player_joined)
 	session.player_disconnected.connect(_on_player_disconnected)
 	session.player_message.connect(_on_player_message)
@@ -101,6 +106,44 @@ func _on_host_failed(reason: String) -> void:
 	host_failed.emit(reason)
 
 
+## The host's answer to a returning player's request (see rejoin_requested).
+func answer_rejoin(player_id: String, approve: bool) -> void:
+	session.answer_claim(player_id, approve)
+
+
+## Players waiting for the host's answer: [{player_id, name}].
+func pending_rejoins() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for player_id: String in session.pending_claims():
+		out.append({"player_id": player_id, "name": session.registry.name_of(player_id)})
+	return out
+
+
+func is_game_paused() -> bool:
+	return LobbyLogic.is_paused(state)
+
+
+## A new connection with no saved identity may claim a started game's offline seat by
+## name (case-insensitive). Only seats that are offline and not removed can be claimed,
+## so a live player's seat can never be taken this way.
+func _claim_policy(player_name: String) -> String:
+	if state["phase"] != LobbyLogic.PHASE_IN_GAME:
+		return ""
+	var wanted: String = player_name.strip_edges().to_lower()
+	for slot: Dictionary in LobbyLogic.away_players(state):
+		if (slot["name"] as String).to_lower() == wanted:
+			return slot["player_id"]
+	return ""
+
+
+func _on_claim_requested(player_id: String, player_name: String) -> void:
+	rejoin_requested.emit(player_id, player_name)
+
+
+func _on_claim_cancelled(player_id: String) -> void:
+	rejoin_request_cancelled.emit(player_id)
+
+
 func _on_hosting(info: Dictionary) -> void:
 	session_info = info
 	hosting.emit(info)
@@ -146,6 +189,13 @@ func _on_player_disconnected(player_id: String) -> void:
 
 func _on_player_message(player_id: String, message: Dictionary) -> void:
 	if message["type"] != Protocol.T_LOBBY_ACTION:
+		if is_game_paused():
+			session.send_to_player(player_id, Envelope.make(Protocol.T_LOBBY_ERROR, {
+				"code": ErrorCodes.GAME_PAUSED,
+				"message": "The game is paused while the host waits for a player.",
+				"action": str(message["type"]),
+			}))
+			return
 		game_message.emit(player_id, message)
 		return
 	var action: Variant = message["payload"].get("action")
@@ -166,6 +216,9 @@ func _on_player_message(player_id: String, message: Dictionary) -> void:
 func _on_session_closed() -> void:
 	session.admission_policy = Callable()
 	session.rejoin_policy = Callable()
+	session.claim_policy = Callable()
+	session.claim_requested.disconnect(_on_claim_requested)
+	session.claim_cancelled.disconnect(_on_claim_cancelled)
 	session.player_joined.disconnect(_on_player_joined)
 	session.player_disconnected.disconnect(_on_player_disconnected)
 	session.player_message.disconnect(_on_player_message)

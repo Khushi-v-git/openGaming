@@ -3,13 +3,19 @@ extends RefCounted
 ## Pure lobby rules: plain-data state in, Result out. No nodes, no networking, no
 ## timers (rule 2). State shape:
 ##   {phase, game_id, min_players, max_players, host_player_id, revision,
-##    slots: [{player_id, name, ready, connected, left}]}
+##    paused, slots: [{player_id, name, ready, connected, left}]}
 ## apply() never mutates its input; on error the caller's state is untouched.
 ##
 ## Player actions (sent by clients):  set_ready {ready}, set_name {name}, leave,
 ##   start (host), kick {player_id} (host).
 ## System actions (host code only, never accepted from the wire): join {name},
 ##   disconnected, reconnected.
+##
+## In a started game a player who drops or leaves keeps their seat (connected=false) and
+## the game pauses, so the host chooses: wait for them, "continue without waiting"
+## (set_paused false; the player may still come back), or remove them for good (kick:
+## left=true). Returning players are recognised by their rejoin token, or by name if the
+## host approves (see HostSession claims).
 ##
 ## The host (host_player_id) is always ready and cannot leave; if the host goes away
 ## the whole session ends (see HostSession.close), so there is no host transfer.
@@ -18,7 +24,7 @@ const PHASE_OPEN: String = "open"
 const PHASE_IN_GAME: String = "in_game"
 
 ## The only action types the host accepts from a connected player.
-const PLAYER_ACTIONS: Array[String] = ["set_ready", "set_name", "leave", "start", "kick"]
+const PLAYER_ACTIONS: Array[String] = ["set_ready", "set_name", "leave", "start", "kick", "set_paused"]
 
 
 static func create(game_id: String, min_players: int, max_players: int, host_player_id: String, host_name: String) -> Dictionary:
@@ -29,6 +35,7 @@ static func create(game_id: String, min_players: int, max_players: int, host_pla
 		"max_players": max_players,
 		"host_player_id": host_player_id,
 		"revision": 0,
+		"paused": false,
 		"slots": [_new_slot(host_player_id, host_name, true)],
 	}
 
@@ -52,6 +59,8 @@ static func apply(state: Dictionary, player_id: String, action: Dictionary) -> D
 			result = _start(next, player_id)
 		"kick":
 			result = _kick(next, player_id, action)
+		"set_paused":
+			result = _set_paused(next, player_id, action)
 		"disconnected":
 			result = _disconnected(next, player_id)
 		"reconnected":
@@ -78,6 +87,7 @@ static func resume(state: Dictionary, host_player_id: String) -> Dictionary:
 		slot["connected"] = slot["player_id"] == host_player_id
 	next["slots"][index]["ready"] = true
 	next["host_player_id"] = host_player_id
+	next["paused"] = next["phase"] == PHASE_IN_GAME and not away_players(next).is_empty()
 	next["revision"] = int(next["revision"]) + 1
 	return CoreResult.success({"state": next})
 
@@ -97,6 +107,21 @@ static func view_for(state: Dictionary, player_id: String) -> Dictionary:
 	var view: Dictionary = state.duplicate(true)
 	view["you"] = player_id
 	return view
+
+
+## Players in a started game who are offline but still own their seat.
+static func away_players(state: Dictionary) -> Array[Dictionary]:
+	var away: Array[Dictionary] = []
+	if state["phase"] != PHASE_IN_GAME:
+		return away
+	for slot: Dictionary in state["slots"]:
+		if not slot["connected"] and not slot["left"]:
+			away.append(slot)
+	return away
+
+
+static func is_paused(state: Dictionary) -> bool:
+	return state["phase"] == PHASE_IN_GAME and bool(state.get("paused", false))
 
 
 static func ready_to_start(state: Dictionary) -> bool:
@@ -162,7 +187,10 @@ static func _leave(state: Dictionary, player_id: String) -> Dictionary:
 		return CoreResult.failure(ErrorCodes.NOT_IN_LOBBY, "You are not in this lobby.")
 	if player_id == state["host_player_id"]:
 		return CoreResult.failure(ErrorCodes.HOST_CANNOT_LEAVE, "The host ends the session instead of leaving.")
-	_remove_or_mark_left(state, index)
+	if state["phase"] == PHASE_OPEN:
+		(state["slots"] as Array).remove_at(index)
+	else:
+		_mark_away(state, index)  # keeps the seat: they can come back, the host decides
 	return CoreResult.success()
 
 
@@ -171,6 +199,7 @@ static func _start(state: Dictionary, player_id: String) -> Dictionary:
 	if not CoreResult.is_ok(checked):
 		return checked
 	state["phase"] = PHASE_IN_GAME
+	state["paused"] = false
 	return CoreResult.success()
 
 
@@ -184,6 +213,21 @@ static func _kick(state: Dictionary, player_id: String, action: Dictionary) -> D
 	if target == state["host_player_id"]:
 		return CoreResult.failure(ErrorCodes.HOST_CANNOT_LEAVE, "The host cannot be removed.")
 	_remove_or_mark_left(state, index)
+	_unpause_if_nobody_is_away(state)
+	return CoreResult.success()
+
+
+## Host only. false = continue without waiting; true = wait again (only while someone is away).
+static func _set_paused(state: Dictionary, player_id: String, action: Dictionary) -> Dictionary:
+	if player_id != state["host_player_id"]:
+		return CoreResult.failure(ErrorCodes.NOT_HOST, "Only the host decides whether to wait.")
+	if state["phase"] != PHASE_IN_GAME:
+		return CoreResult.failure(ErrorCodes.WRONG_PHASE, "The game has not started.")
+	if typeof(action.get("paused")) != TYPE_BOOL:
+		return CoreResult.failure(ErrorCodes.BAD_ACTION, "set_paused needs a true/false 'paused'.")
+	if action["paused"] and away_players(state).is_empty():
+		return CoreResult.failure(ErrorCodes.NOTHING_TO_WAIT_FOR, "Everyone is here.")
+	state["paused"] = action["paused"]
 	return CoreResult.success()
 
 
@@ -196,7 +240,7 @@ static func _disconnected(state: Dictionary, player_id: String) -> Dictionary:
 	if state["phase"] == PHASE_OPEN:
 		(state["slots"] as Array).remove_at(index)
 	else:
-		state["slots"][index]["connected"] = false
+		_mark_away(state, index)
 	return CoreResult.success()
 
 
@@ -207,6 +251,7 @@ static func _reconnected(state: Dictionary, player_id: String) -> Dictionary:
 	if state["slots"][index]["left"]:
 		return CoreResult.failure(ErrorCodes.PLAYER_LEFT, "This player has left the game.")
 	state["slots"][index]["connected"] = true
+	_unpause_if_nobody_is_away(state)
 	return CoreResult.success()
 
 
@@ -236,6 +281,18 @@ static func _check_name(state: Dictionary, own_player_id: String, raw_name: Stri
 		if slot["player_id"] != own_player_id and (slot["name"] as String).to_lower() == wanted:
 			return CoreResult.failure(ErrorCodes.NAME_TAKEN, "The name '%s' is already taken." % cleaned["name"])
 	return CoreResult.success({"name": cleaned["name"]})
+
+
+## A started game's player went away: keep the seat and pause (asking the host again even
+## if they had chosen to continue earlier).
+static func _mark_away(state: Dictionary, index: int) -> void:
+	state["slots"][index]["connected"] = false
+	state["paused"] = true
+
+
+static func _unpause_if_nobody_is_away(state: Dictionary) -> void:
+	if away_players(state).is_empty():
+		state["paused"] = false
 
 
 static func _remove_or_mark_left(state: Dictionary, index: int) -> void:

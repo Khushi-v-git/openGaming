@@ -4,6 +4,7 @@ extends RefCounted
 ## handshake, answers pings and reports what happened through signals.
 ## The owner calls poll() every frame (it polls the transport too).
 
+signal waiting_for_host(message: String)  # the host is deciding whether to let us back in
 signal connected(welcome: Dictionary)  # welcome payload: player_id, rejoin_token, extras
 signal rejected(code: String, message: String, host_info: Dictionary)  # handshake refused; host_info = {game_id, app_version} of the host
 signal connect_failed(reason: String)  # could not reach the host or handshake never finished
@@ -24,6 +25,7 @@ var host_app_version: String = ""
 var _app_version: String
 var _game_id: String
 var _handshake_timeout: int
+var _pending_wait: int
 var _host_silence_timeout: int
 var _state: State = State.IDLE
 var _player_name: String = ""
@@ -37,6 +39,7 @@ func _init(client_transport: Transport, app_version: String, game_id: String = "
 	_app_version = app_version
 	_game_id = game_id
 	_handshake_timeout = int(options.get("handshake_timeout_msec", 5000))
+	_pending_wait = int(options.get("pending_wait_msec", 90000))  # longer than the host's own claim timeout
 	_host_silence_timeout = int(options.get("host_silence_timeout_msec", 20000))
 	transport.join_succeeded.connect(_on_join_succeeded)
 	transport.join_failed.connect(_on_join_failed)
@@ -118,6 +121,9 @@ func _on_message(peer_id: int, message: Dictionary) -> void:
 				host_game_id = str(payload.get("game_id", ""))
 				host_app_version = str(payload.get("app_version", ""))
 				connected.emit(payload)
+			elif message["type"] == Protocol.T_PENDING:
+				_handshake_deadline = _now() + _pending_wait
+				waiting_for_host.emit(str(payload.get("message", "Waiting for the host.")))
 			elif message["type"] == Protocol.T_REJECT:
 				_state = State.IDLE
 				transport.leave()

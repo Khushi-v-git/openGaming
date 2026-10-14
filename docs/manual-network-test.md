@@ -66,11 +66,20 @@ Setup: start the demo twice in two windows (`--name=Host` and `--name=Guest`).
 8. **Guest process killed:** end the guest's process in Task Manager (not Leave).
    - In the open lobby the guest's row disappears from the host within about 15 seconds
      (the ping timeout) or at once if Windows closes the socket.
-   - After the game has started the row stays and says "Disconnected"; the host and the
-     other players keep going. A restarted demo with the same name is a *new* player and
-     is correctly refused ("This game has already started."). Rejoining as the same player
-     needs the surviving client's saved identity, so it is tested in B.5 and C.5/C.6 (the
-     client process stays alive there), not here.
+   - After the game has started the row stays and says "Disconnected", and the host shows
+     "Game paused: waiting for <name> to come back." with **Continue without waiting**. The
+     other players cannot act while it is paused.
+   - **Restart the demo with the same name** and join the same address: the guest sees
+     "Waiting for the host to let you back in." with Cancel, and the host shows
+     "<name> wants to rejoin" with **Let in** / **Decline**. Let in: the guest is back in the
+     same seat, the pause notice disappears. Repeat with Decline: the guest gets "The host
+     did not let you back in" and the seat stays open. Repeat with Cancel on the guest: the
+     host's request disappears.
+   - A *different* name while the seat is open must still say "This game has already
+     started." Press **Remove** on the absent player's row, then try their name again: also
+     "already started" (the seat is gone).
+   Also: press **Leave** (not Task Manager) on a guest in a started game: the seat is kept
+   the same way, and the same name can ask to come back.
 9. **Host closes:** Host presses **Leave** while a guest is in: the guest returns to the start
    screen with "Left the session: ...". Host returns to the start screen within 2 seconds.
 10. **Host process killed** (Task Manager): the guest shows "Left the session: Lost connection
@@ -92,7 +101,9 @@ IP (`ipconfig`).
 5. **Wi-Fi blip:** with the guest in a *started* game, switch the guest's Wi-Fi off for 5
    seconds, then on. Record how long until the guest's screen noticed and what it showed
    (expected: back to the start screen with "Left the session" and a **Rejoin** button).
-   Press **Rejoin**: the guest returns to the same player slot, the host shows Connected.
+   Press **Rejoin**: the guest returns to the same player slot, the host shows Connected
+   and the pause notice goes away. (Rejoin uses the identity the app still holds; the
+   restart-and-ask-by-name path is item A.8.)
 6. **Sleep:** let the guest's screen lock for 2 minutes without sleeping the PC; then return.
    Record whether the session survived.
 7. **Version mismatch:** have the guest check out a different commit that changes the app

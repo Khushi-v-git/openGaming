@@ -112,7 +112,13 @@ docs/
 7. **Reconnect support.** Every player has a stable `player_id` and a secret
    rejoin token. If a connection drops, the player can rejoin and the host
    resends the full current state. The host must tolerate a disconnected
-   player without crashing or ending the game.
+   player without crashing or ending the game. In a started game a player who
+   drops or leaves keeps their seat and the game pauses; the host decides:
+   wait, "continue without waiting" (the player may still return), or remove
+   them for good. A returning player who lost their saved identity (restarted
+   app) may claim their seat by typing the same name; the host is asked and
+   must approve. A seat that is online, or was removed, can never be claimed.
+   While paused the host refuses players' game actions (`GAME_PAUSED`).
 
 8. **Serializable state.** Game state must be fully serializable to plain data
    so any player can save a game, load it, and resume it as host. A save has

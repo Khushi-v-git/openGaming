@@ -82,6 +82,32 @@ lobby the seat is freed). The player comes back with `hello` carrying `player_id
 
 Kicked players and players who left the open lobby lose their identity.
 
+### When a player drops mid-game: the host decides
+
+In a started game a player who drops, closes the app or presses Leave **keeps their seat**
+(shown "Disconnected") and the game **pauses** (`state.paused`). The host chooses:
+
+- **wait** (the default): nothing to do; the player comes back and the game resumes;
+- **Continue without waiting** (`set_paused false`): the game goes on, the seat stays theirs
+  and they may still return. If someone else drops, the host is asked again;
+- **Remove** (`kick`): the seat is gone for good (`left`), the wait ends, the token is dead.
+
+While paused, `LobbyHost` answers players' game traffic with `lobby_error GAME_PAUSED`
+instead of passing it up; the host's own game code must check `LobbyHost.is_game_paused()`.
+A resumed save starts paused until everyone offline has returned.
+
+### Coming back without a saved identity (restarted app)
+
+A guest whose app restarted has no token. They join normally with the same name. If the
+game has started and that name (case-insensitive) belongs to an **offline** seat, the host
+is not refused-with-"already started": the connection is told `pending`, waits, and the
+host gets `rejoin_requested(player_id, name)`. `LobbyHost.answer_rejoin(player_id, approve)`
+decides. Approving seats the new connection as the same player with a **new token** (the old
+one dies); declining answers `CLAIM_DENIED`. A claim that is cancelled, replaced by a newer
+one for the same seat, or unanswered for `claim_timeout_msec` (60 s) simply goes away.
+Only a seat that is offline and not removed can be claimed, so a live player cannot be
+impersonated this way; the host sees the name and decides, so only let in someone you know.
+
 ## Saving and resuming
 
 `LobbyHost.snapshot(game_state)` returns plain data (`SessionSnapshot`): the lobby, every

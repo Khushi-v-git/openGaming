@@ -43,6 +43,10 @@ var lobby_view: Control
 var address_label: Label
 var copy_button: Button
 var players_box: VBoxContainer
+var claims_box: VBoxContainer  # host only: returning players waiting to be let in
+var notice_label: Label  # "Waiting for X to come back."
+var continue_button: Button  # host only, while paused: continue without waiting
+var wait_button: Button  # host only, after continuing: wait for the absent player again
 var ready_button: CheckButton
 var start_button: Button
 var leave_button: Button
@@ -195,6 +199,21 @@ func _build_lobby_view() -> Control:
 	players_box = VBoxContainer.new()
 	box.add_child(players_box)
 
+	claims_box = VBoxContainer.new()
+	box.add_child(claims_box)
+
+	notice_label = _label("")
+	notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(notice_label)
+	continue_button = Button.new()
+	continue_button.text = "Continue without waiting"
+	continue_button.pressed.connect(func() -> void: _act({"type": "set_paused", "paused": false}))
+	box.add_child(continue_button)
+	wait_button = Button.new()
+	wait_button.text = "Wait for them"
+	wait_button.pressed.connect(func() -> void: _act({"type": "set_paused", "paused": true}))
+	box.add_child(wait_button)
+
 	ready_button = CheckButton.new()
 	ready_button.text = "I'm ready"
 	ready_button.toggled.connect(func(pressed: bool) -> void: _act({"type": "set_ready", "ready": pressed}))
@@ -206,6 +225,7 @@ func _build_lobby_view() -> Control:
 	box.add_child(start_button)
 
 	lobby_status_label = _label("")
+	lobby_status_label.visible = false  # only takes room while it has something to say
 	lobby_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(lobby_status_label)
 
@@ -214,6 +234,11 @@ func _build_lobby_view() -> Control:
 	leave_button.pressed.connect(leave)
 	box.add_child(leave_button)
 	return box
+
+
+func _set_lobby_status(text: String) -> void:
+	lobby_status_label.text = text
+	lobby_status_label.visible = not text.is_empty()
 
 
 func _label(text: String) -> Label:
@@ -243,6 +268,8 @@ func host_session() -> void:
 	_host.state_changed.connect(_on_state_changed)
 	_host.game_started.connect(_on_game_started)
 	_host.closed.connect(_on_host_closed)
+	_host.rejoin_requested.connect(func(_player_id: String, _player_name: String) -> void: _render())
+	_host.rejoin_request_cancelled.connect(func(_player_id: String) -> void: _render())
 	var started: Dictionary = _host.start(config)
 	if not CoreResult.is_ok(started):
 		var message: String = str(started["error"]["message"])
@@ -282,10 +309,10 @@ func cancel() -> void:
 
 func leave() -> void:
 	if _host != null:
-		lobby_status_label.text = "Closing..."
+		_set_lobby_status("Closing...")
 		_host.close()  # _on_host_closed returns us to the start view
 	elif _client != null:
-		lobby_status_label.text = "Leaving..."
+		_set_lobby_status("Leaving...")
 		_client.leave()  # _on_left returns us to the start view
 
 
@@ -295,10 +322,11 @@ func _begin_join(address: String, player_name: String, identity: Dictionary) -> 
 	var registry: GameRegistry = options.get("game_registry", null)
 	if registry != null:
 		_client.game_validator = registry.validator()
+	_client.waiting.connect(func(message: String) -> void: connecting_label.text = message)
 	_client.joined.connect(func(_player_id: String) -> void: _on_joined())
 	_client.join_failed.connect(_on_join_failed)
 	_client.state_changed.connect(_on_state_changed)
-	_client.action_failed.connect(func(_code: String, message: String, _action: String) -> void: lobby_status_label.text = message)
+	_client.action_failed.connect(func(_code: String, message: String, _action: String) -> void: _set_lobby_status(message))
 	_client.game_started.connect(_on_game_started)
 	_client.left.connect(_on_left)
 	_joining_address = address
@@ -310,7 +338,7 @@ func _begin_join(address: String, player_name: String, identity: Dictionary) -> 
 func _act(action: Dictionary) -> void:
 	if _host != null:
 		var result: Dictionary = _host.act(action)
-		lobby_status_label.text = "" if CoreResult.is_ok(result) else str(result["error"]["message"])
+		_set_lobby_status("" if CoreResult.is_ok(result) else str(result["error"]["message"]))
 	elif _client != null:
 		_client.act(action)
 
@@ -334,7 +362,7 @@ func _on_state_changed(state: Dictionary) -> void:
 
 
 func _on_game_started(state: Dictionary) -> void:
-	lobby_status_label.text = "Game starting..."
+	_set_lobby_status("Game starting...")
 	game_started.emit(state)
 
 
@@ -397,7 +425,7 @@ func _show_lobby_view() -> void:
 	start_view.visible = false
 	connecting_view.visible = false
 	lobby_view.visible = true
-	lobby_status_label.text = ""
+	_set_lobby_status("")
 	if _client != null:
 		_state = _client.state
 	_update_title()
@@ -414,7 +442,7 @@ func _render() -> void:
 	copy_button.visible = is_host
 	address_label.text = "Share this address: %s" % shared_address
 	ready_button.visible = not is_host
-	start_button.visible = is_host
+	start_button.visible = is_host and _state["phase"] == LobbyLogic.PHASE_OPEN
 	start_button.disabled = not LobbyLogic.ready_to_start(_state)
 	for child: Node in players_box.get_children():
 		players_box.remove_child(child)
@@ -423,11 +451,54 @@ func _render() -> void:
 		players_box.add_child(_player_row(slot, my_id, is_host))
 		if slot["player_id"] == my_id:
 			ready_button.set_pressed_no_signal(bool(slot["ready"]))  # the toggle mirrors the host's state
+	_render_claims(is_host)
+	_render_pause(is_host)
 	var started: bool = _state["phase"] == LobbyLogic.PHASE_IN_GAME
 	ready_button.disabled = started
 	if started:
 		start_button.disabled = true
 	_update_title()
+
+
+## Returning players asking the host to let them back in.
+func _render_claims(is_host: bool) -> void:
+	for child: Node in claims_box.get_children():
+		claims_box.remove_child(child)
+		child.queue_free()
+	claims_box.visible = is_host
+	if not is_host:
+		return
+	for request: Dictionary in _host.pending_rejoins():
+		var row: HBoxContainer = HBoxContainer.new()
+		var label: Label = _label("%s wants to rejoin" % request["name"])
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		var player_id: String = request["player_id"]
+		var allow: Button = Button.new()
+		allow.text = "Let in"
+		allow.pressed.connect(func() -> void: _host.answer_rejoin(player_id, true))
+		row.add_child(allow)
+		var decline: Button = Button.new()
+		decline.text = "Decline"
+		decline.pressed.connect(func() -> void: _host.answer_rejoin(player_id, false))
+		row.add_child(decline)
+		claims_box.add_child(row)
+
+
+## The game waits for absent players until the host says otherwise.
+func _render_pause(is_host: bool) -> void:
+	var away: Array[Dictionary] = LobbyLogic.away_players(_state)
+	var names: PackedStringArray = PackedStringArray()
+	for slot: Dictionary in away:
+		names.append(slot["name"])
+	var paused: bool = LobbyLogic.is_paused(_state)
+	notice_label.visible = not away.is_empty()
+	if paused:
+		notice_label.text = "Game paused: waiting for %s to come back." % ", ".join(names)
+	else:
+		notice_label.text = "%s is away; the game is continuing without them." % ", ".join(names)
+	continue_button.visible = is_host and paused
+	wait_button.visible = is_host and not paused and not away.is_empty()
 
 
 func _update_title() -> void:
@@ -457,7 +528,8 @@ func _player_row(slot: Dictionary, my_id: String, is_host: bool) -> Control:
 	if not slot["connected"]:
 		status = "Disconnected"
 	row.add_child(_label(status))
-	if is_host and not is_host_slot and not slot["left"] and _state["phase"] == LobbyLogic.PHASE_OPEN:
+	var removable: bool = _state["phase"] == LobbyLogic.PHASE_OPEN or not slot["connected"]
+	if is_host and not is_host_slot and not slot["left"] and removable:
 		var kick: Button = Button.new()
 		kick.text = "Remove"
 		var target: String = slot["player_id"]

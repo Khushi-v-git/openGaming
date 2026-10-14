@@ -482,3 +482,122 @@ func test_hosting_signal_reports_the_address() -> void:
 	assert_eq(host.recorder.hosting.size(), 1)
 	assert_eq(host.recorder.hosting[0]["address"], host.address)
 	assert_eq(host.recorder.host_failures.size(), 0)
+
+
+# --- returning players with no saved identity (claims) ---------------------------
+
+## Asha joins and then vanishes; the host's policy lets a new connection called "asha"
+## (any case) ask for her seat. Returns the host rig.
+func _host_with_an_away_player(options: Dictionary = {}) -> HostRig:
+	var host: HostRig = await start_host(options)
+	var asha: ClientRig = await join_and_wait(host, "Asha", APP, "")
+	assert_eq(asha.session.player_id, "p1")
+	host.session.claim_policy = func(player_name: String) -> String:
+		var offline: bool = not host.session.registry.is_connected_player("p1")
+		return "p1" if offline and player_name.to_lower() == "asha" else ""
+	asha.session.transport.leave()
+	assert_true(await pump(func() -> bool: return host.recorder.left.size() == 1))
+	return host
+
+
+func test_a_claim_makes_the_client_wait_and_asks_the_host() -> void:
+	var host: HostRig = await _host_with_an_away_player()
+	var back: ClientRig = new_client(host, "ASHA", APP, "")
+	assert_true(await pump(func() -> bool: return not host.recorder.claims.is_empty() and not back.recorder.waiting.is_empty()))
+	assert_eq(host.recorder.claims, [{"player_id": "p1", "name": "ASHA"}] as Array[Dictionary])
+	assert_eq(host.session.pending_claims(), ["p1"] as Array[String])
+	assert_false(back.recorder.has_outcome(), "no decision yet")
+	assert_false(back.session.is_active())
+
+
+func test_a_waiting_client_is_not_timed_out_by_the_normal_handshake_limit() -> void:
+	var host: HostRig = await _host_with_an_away_player()
+	var back: ClientRig = new_client(host, "Asha", APP, "")
+	await pump(func() -> bool: return not back.recorder.waiting.is_empty())
+	clock.now += 20000  # far past the 5 s handshake timeout, within the claim timeouts
+	await frames(10)
+	assert_false(back.recorder.has_outcome())
+	assert_eq(host.session.pending_claims(), ["p1"] as Array[String])
+
+
+func test_approving_a_claim_seats_them_as_the_same_player_with_a_new_token() -> void:
+	var host: HostRig = await _host_with_an_away_player()
+	var old_token: String = host.session.registry.token_of("p1")
+	var back: ClientRig = new_client(host, "Asha", APP, "")
+	await pump(func() -> bool: return not host.recorder.claims.is_empty())
+	host.session.answer_claim("p1", true)
+	assert_true(await pump(func() -> bool: return back.recorder.has_outcome()))
+	assert_eq(back.recorder.connected.size(), 1)
+	assert_eq(back.session.player_id, "p1")
+	assert_ne(back.session.rejoin_token, old_token)
+	assert_eq(back.session.rejoin_token, host.session.registry.token_of("p1"))
+	assert_eq(host.recorder.rejoined, ["p1"] as Array[String])
+	assert_eq(host.session.pending_claims().size(), 0)
+	assert_eq(host.session.registry.count(), 1, "no second player was created")
+	assert_false(host.session.registry.verify_token("p1", old_token), "the old identity is dead")
+
+
+func test_declining_a_claim_refuses_the_connection() -> void:
+	var host: HostRig = await _host_with_an_away_player()
+	var back: ClientRig = new_client(host, "Asha", APP, "")
+	await pump(func() -> bool: return not host.recorder.claims.is_empty())
+	host.session.answer_claim("p1", false)
+	assert_true(await pump(func() -> bool: return back.recorder.has_outcome()))
+	assert_eq(back.recorder.rejected[0]["code"], ErrorCodes.CLAIM_DENIED)
+	assert_eq(host.recorder.rejoined.size(), 0)
+	assert_false(host.session.registry.is_connected_player("p1"))
+
+
+func test_a_claimer_who_gives_up_cancels_the_request() -> void:
+	var host: HostRig = await _host_with_an_away_player()
+	var back: ClientRig = new_client(host, "Asha", APP, "")
+	await pump(func() -> bool: return not host.recorder.claims.is_empty())
+	back.session.leave()
+	assert_true(await pump(func() -> bool: return host.recorder.claims_cancelled.size() == 1))
+	assert_eq(host.session.pending_claims().size(), 0)
+	host.session.answer_claim("p1", true)  # a late answer to nobody is harmless
+	assert_eq(host.recorder.rejoined.size(), 0)
+
+
+func test_a_newer_claim_replaces_an_older_one_for_the_same_seat() -> void:
+	var host: HostRig = await _host_with_an_away_player()
+	var first: ClientRig = new_client(host, "Asha", APP, "")
+	await pump(func() -> bool: return host.recorder.claims.size() == 1)
+	var second: ClientRig = new_client(host, "Asha", APP, "")
+	assert_true(await pump(func() -> bool: return first.recorder.has_outcome() and host.recorder.claims.size() == 2))
+	assert_eq(first.recorder.rejected[0]["code"], ErrorCodes.CLAIM_DENIED)
+	assert_eq(host.session.pending_claims(), ["p1"] as Array[String])
+	host.session.answer_claim("p1", true)
+	assert_true(await pump(func() -> bool: return second.recorder.connected.size() == 1))
+
+
+func test_an_unanswered_claim_times_out_on_the_host() -> void:
+	var host: HostRig = await _host_with_an_away_player({"claim_timeout_msec": 3000})
+	var back: ClientRig = new_client(host, "Asha", APP, "")
+	await pump(func() -> bool: return not host.recorder.claims.is_empty())
+	clock.now += 3500
+	assert_true(await pump(func() -> bool: return back.recorder.has_outcome()))
+	assert_eq(back.recorder.rejected[0]["code"], ErrorCodes.HANDSHAKE_TIMEOUT)
+	assert_eq(host.recorder.claims_cancelled, ["p1"] as Array[String])
+
+
+func test_a_waiting_connection_cannot_talk_to_the_game() -> void:
+	var host: HostRig = await _host_with_an_away_player()
+	var raw: TransportRig = await raw_connect(host)
+	raw.transport.send(Transport.HOST_PEER_ID, Handshake.hello(APP, "", "Asha"))
+	await pump(func() -> bool: return not host.recorder.claims.is_empty())
+	raw.transport.send(Transport.HOST_PEER_ID, Envelope.make(Protocol.T_GAME_ACTION, {"action": "cheat"}))
+	raw.transport.send(Transport.HOST_PEER_ID, Envelope.make(Protocol.T_LOBBY_ACTION, {"action": {"type": "start"}}))
+	await frames(10)
+	assert_eq(host.recorder.messages.size(), 0)
+	assert_eq(raw.recorder.messages_of_type(Protocol.T_REJECT).size(), 0, "ignored, not refused")
+
+
+func test_without_a_claim_policy_nothing_changes() -> void:
+	var host: HostRig = await start_host()
+	var a: ClientRig = await join_and_wait(host, "Asha", APP, "")
+	a.session.transport.leave()
+	await pump(func() -> bool: return host.recorder.left.size() == 1)
+	var again: ClientRig = await join_and_wait(host, "Asha", APP, "")
+	assert_eq(again.recorder.connected.size(), 1, "a plain host just makes a new player")
+	assert_eq(again.session.player_id, "p2")

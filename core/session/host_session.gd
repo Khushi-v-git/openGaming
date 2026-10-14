@@ -7,17 +7,23 @@ extends RefCounted
 ## Hooks (set before start):
 ##   admission_policy(player_name) -> Result   veto a join (room full, name taken...).
 ##   rejoin_policy(player_id) -> Result         veto a rejoin (player left, room full...).
+##   claim_policy(player_name) -> String        a fresh hello whose name matches an offline
+##                                              player's seat returns that player_id: the host
+##                                              is asked (claim_requested) and answers with
+##                                              answer_claim(). "" means no claim.
 ##   welcome_extra(player_id) -> Dictionary    extra data for that player's welcome.
 ##
 ## Options (all optional): max_pending_handshakes, handshake_timeout_msec,
 ## ping_interval_msec, ping_timeout_msec, rate_burst, rate_per_sec,
-## max_rate_violations, pending_burst, pending_per_sec, close_grace_msec.
+## max_rate_violations, pending_burst, pending_per_sec, close_grace_msec, claim_timeout_msec.
 
 signal player_joined(player_id: String, rejoined: bool)
 signal player_disconnected(player_id: String)
 signal player_message(player_id: String, message: Dictionary)
 signal hosting(info: Dictionary)  # transport is live: info.address is what to share
 signal host_failed(reason: String)
+signal claim_requested(player_id: String, player_name: String)  # a returning player asks to take their seat back
+signal claim_cancelled(player_id: String)  # ... and gave up, timed out or was replaced
 signal closed()  # after close(): everyone has left or the grace period ended
 
 var transport: Transport
@@ -26,6 +32,7 @@ var registry: PlayerRegistry = PlayerRegistry.new()
 var clock: Callable = func() -> int: return Time.get_ticks_msec()
 var admission_policy: Callable = Callable()
 var rejoin_policy: Callable = Callable()
+var claim_policy: Callable = Callable()
 var welcome_extra: Callable = Callable()
 
 var _app_version: String
@@ -40,11 +47,13 @@ var _max_violations: int
 var _pending_burst: float
 var _pending_per_sec: float
 var _close_grace: int
+var _claim_timeout: int
 var _shutdown_deadline: int = 0  # non-zero once close() was called
 var _closed: bool = false
 
 var _pending: Dictionary = {}  # peer_id -> {since, limiter}
 var _players: Dictionary = {}  # peer_id -> {limiter, last_heard, last_ping, violations}
+var _claims: Dictionary = {}  # peer_id -> {player_id, name, since}: waiting for the host's answer
 var _closing: Dictionary = {}  # peer_id -> true (we already sent a reject/kick)
 
 
@@ -62,6 +71,7 @@ func _init(host_transport: Transport, app_version: String, game_id: String, opti
 	_pending_burst = float(options.get("pending_burst", 5))
 	_pending_per_sec = float(options.get("pending_per_sec", 2))
 	_close_grace = int(options.get("close_grace_msec", 1000))
+	_claim_timeout = int(options.get("claim_timeout_msec", 60000))
 	transport.peer_connected.connect(_on_peer_connected)
 	transport.peer_disconnected.connect(_on_peer_disconnected)
 	transport.message_received.connect(_on_message)
@@ -87,6 +97,9 @@ func poll() -> void:
 	for peer_id: int in _pending.keys():
 		if now - int(_pending[peer_id]["since"]) >= _handshake_timeout:
 			_refuse(peer_id, ErrorCodes.HANDSHAKE_TIMEOUT, "The handshake took too long.")
+	for peer_id: int in _claims.keys():
+		if now - int(_claims[peer_id]["since"]) >= _claim_timeout:
+			_refuse(peer_id, ErrorCodes.HANDSHAKE_TIMEOUT, "The host did not answer in time.")
 	for peer_id: int in _players.keys():
 		if _closing.has(peer_id):
 			continue
@@ -115,6 +128,31 @@ func kick_player(player_id: String, code: String, message: String) -> void:
 	var peer_id: int = registry.peer_of(player_id)
 	if peer_id != 0 and _players.has(peer_id):
 		_kick(peer_id, code, message)
+
+
+## The host's answer to claim_requested. Approving binds the waiting connection to the
+## seat with a brand-new token (the old one dies); declining refuses it.
+func answer_claim(player_id: String, approve: bool) -> void:
+	var peer_id: int = _claim_peer(player_id)
+	if peer_id == 0:
+		return
+	if not approve:
+		_refuse(peer_id, ErrorCodes.CLAIM_DENIED, "The host did not let you back in.")
+		return
+	_claims.erase(peer_id)
+	var stale_peer: int = registry.peer_of(player_id)
+	if stale_peer != 0:
+		_replace_connection(stale_peer)
+	registry.rotate_token(player_id)
+	_admit(peer_id, player_id, true)
+
+
+## Player ids with a request waiting for the host.
+func pending_claims() -> Array[String]:
+	var ids: Array[String] = []
+	for peer_id: int in _claims:
+		ids.append(_claims[peer_id]["player_id"])
+	return ids
 
 
 func connected_player_ids() -> Array[String]:
@@ -156,6 +194,7 @@ func _finish_close() -> void:
 	transport.leave()
 	_pending.clear()
 	_players.clear()
+	_claims.clear()
 	_closing.clear()
 	transport.peer_connected.disconnect(_on_peer_connected)
 	transport.peer_disconnected.disconnect(_on_peer_disconnected)
@@ -186,6 +225,7 @@ func _on_peer_connected(peer_id: int) -> void:
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	_pending.erase(peer_id)
+	_drop_claim(peer_id)
 	_closing.erase(peer_id)
 	_players.erase(peer_id)
 	var player_id: String = registry.unbind_peer(peer_id)
@@ -198,6 +238,8 @@ func _on_message(peer_id: int, message: Dictionary) -> void:
 	if _closing.has(peer_id):
 		return
 	var now: int = _now()
+	if _claims.has(peer_id):
+		return  # waiting for the host; nothing they say matters until it answers
 	if _pending.has(peer_id):
 		if not (_pending[peer_id]["limiter"] as RateLimiter).allow(now):
 			_refuse(peer_id, ErrorCodes.RATE_LIMITED, "Too many messages.")
@@ -228,6 +270,11 @@ func _on_pending_message(peer_id: int, message: Dictionary) -> void:
 	if not str(checked["player_id"]).is_empty():
 		_handle_rejoin(peer_id, str(checked["player_id"]), str(checked["rejoin_token"]))
 		return
+	if claim_policy.is_valid():
+		var claimed: String = str(claim_policy.call(checked["player_name"]))
+		if not claimed.is_empty():
+			_begin_claim(peer_id, claimed, checked["player_name"])
+			return
 	if admission_policy.is_valid():
 		var verdict: Dictionary = admission_policy.call(checked["player_name"])
 		if not CoreResult.is_ok(verdict):
@@ -302,8 +349,35 @@ func _admit(peer_id: int, player_id: String, rejoined: bool) -> void:
 	player_joined.emit(player_id, rejoined)
 
 
+## A returning player (no saved identity) asks for their seat by name. The connection
+## waits, told so with `pending`, until the host answers.
+func _begin_claim(peer_id: int, player_id: String, player_name: String) -> void:
+	var earlier: int = _claim_peer(player_id)
+	if earlier != 0:
+		_refuse(earlier, ErrorCodes.CLAIM_DENIED, "Another request for this seat replaced yours.")
+	_pending.erase(peer_id)
+	_claims[peer_id] = {"player_id": player_id, "name": player_name, "since": _now()}
+	_send(peer_id, Envelope.make(Protocol.T_PENDING, {"reason": "claim", "message": "Waiting for the host to let you back in."}))
+	claim_requested.emit(player_id, player_name)
+
+
+func _claim_peer(player_id: String) -> int:
+	for peer_id: int in _claims:
+		if _claims[peer_id]["player_id"] == player_id:
+			return peer_id
+	return 0
+
+
+func _drop_claim(peer_id: int) -> void:
+	if _claims.has(peer_id):
+		var player_id: String = _claims[peer_id]["player_id"]
+		_claims.erase(peer_id)
+		claim_cancelled.emit(player_id)
+
+
 ## Rejects a peer that has not completed the handshake, then closes it.
 func _refuse(peer_id: int, code: String, message: String) -> void:
+	_drop_claim(peer_id)
 	_pending.erase(peer_id)
 	_closing[peer_id] = true
 	_send(peer_id, Handshake.reject(code, message, _game_id, _app_version))

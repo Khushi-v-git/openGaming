@@ -25,6 +25,7 @@ const TOO_MANY_PENDING: String = "TOO_MANY_PENDING"
 const PING_TIMEOUT: String = "PING_TIMEOUT"
 const KICKED: String = "KICKED"
 const REPLACED: String = "REPLACED"
+const CLAIM_DENIED: String = "CLAIM_DENIED"  # the host declined to let a returning player back in
 const LEFT: String = "LEFT"  # the player asked to leave
 
 # Lobby
@@ -39,6 +40,8 @@ const ALREADY_JOINED: String = "ALREADY_JOINED"
 const HOST_CANNOT_LEAVE: String = "HOST_CANNOT_LEAVE"
 const PLAYER_LEFT: String = "PLAYER_LEFT"
 const BAD_ACTION: String = "BAD_ACTION"
+const GAME_PAUSED: String = "GAME_PAUSED"  # the host is waiting for a player who is away
+const NOTHING_TO_WAIT_FOR: String = "NOTHING_TO_WAIT_FOR"
 
 # Client-side only (never sent on the wire)
 const CONNECT_FAILED: String = "CONNECT_FAILED"

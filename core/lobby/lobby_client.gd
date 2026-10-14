@@ -6,6 +6,7 @@ extends RefCounted
 ##
 ## Call leave() when done: it breaks the references this object holds to the session.
 
+signal waiting(message: String)  # the host is deciding whether to let us back in
 signal joined(player_id: String)
 signal join_failed(code: String, message: String, host_info: Dictionary)  # rejected / unreachable / unknown game; host_info = {game_id, app_version}
 signal state_changed(state: Dictionary)
@@ -29,6 +30,7 @@ var _leave_deadline: int = 0
 func _init(transport: Transport, app_version: String, game_id: String = "", session_options: Dictionary = {}) -> void:
 	session = ClientSession.new(transport, app_version, game_id, session_options)
 	session.connected.connect(_on_connected)
+	session.waiting_for_host.connect(_on_waiting)
 	session.rejected.connect(_on_rejected)
 	session.connect_failed.connect(_on_connect_failed)
 	session.host_lost.connect(_on_host_lost)
@@ -105,6 +107,10 @@ func _on_connected(welcome: Dictionary) -> void:
 	joined.emit(player_id)
 
 
+func _on_waiting(message: String) -> void:
+	waiting.emit(message)
+
+
 func _on_rejected(code: String, message: String, host_info: Dictionary) -> void:
 	_release()
 	join_failed.emit(code, message, host_info)
@@ -158,6 +164,7 @@ func _finish(code: String, message: String) -> void:
 func _release() -> void:
 	if session.connected.is_connected(_on_connected):
 		session.connected.disconnect(_on_connected)
+		session.waiting_for_host.disconnect(_on_waiting)
 		session.rejected.disconnect(_on_rejected)
 		session.connect_failed.disconnect(_on_connect_failed)
 		session.host_lost.disconnect(_on_host_lost)

@@ -325,8 +325,10 @@ func test_polite_leave_is_recorded_by_the_host_even_mid_game() -> void:
 	a.client.leave()
 	assert_true(await pump(func() -> bool: return a.recorder.left.size() >= 1))
 	assert_eq(a.recorder.left[0]["code"], ErrorCodes.LEFT)
-	assert_true(await pump(func() -> bool: return host.state()["slots"][1]["left"]))
-	assert_false(host.state()["slots"][1]["connected"])
+	assert_true(await pump(func() -> bool: return not host.state()["slots"][1]["connected"]))
+	assert_false(host.state()["slots"][1]["left"], "leaving keeps the seat; the host decides")
+	assert_true(host.state()["paused"])
+	assert_eq(host.state()["slots"].size(), 2)
 
 
 func test_leave_gives_up_waiting_for_a_silent_host() -> void:
@@ -504,11 +506,11 @@ func test_player_removed_or_gone_mid_game_cannot_rejoin() -> void:
 	var b_identity: Dictionary = b.client.identity()
 	host.lobby.act({"type": "kick", "player_id": a.client.player_id})
 	b.client.leave()
-	await pump(func() -> bool: return host.state()["slots"][1]["left"] and host.state()["slots"][2]["left"])
+	await pump(func() -> bool: return host.state()["slots"][1]["left"] and not host.state()["slots"][2]["connected"])
 	var a2: LobbyClientRig = await join_player(host, "Asha", a_identity)
+	assert_eq(a2.recorder.join_failures[0]["code"], ErrorCodes.PLAYER_LEFT, "removed by the host: gone for good")
 	var b2: LobbyClientRig = await join_player(host, "Bo", b_identity)
-	assert_eq(a2.recorder.join_failures[0]["code"], ErrorCodes.PLAYER_LEFT)
-	assert_eq(b2.recorder.join_failures[0]["code"], ErrorCodes.PLAYER_LEFT)
+	assert_eq(b2.recorder.joined, [b_identity["player_id"]] as Array[String], "left on their own: may come back")
 
 
 func test_players_who_dropped_before_start_have_no_identity_afterwards() -> void:
@@ -656,6 +658,7 @@ func test_a_leaked_save_stops_working_once_the_real_player_is_back() -> void:
 	var host: LobbyHostRig = (await resume_lobby(saved))[0]
 	var real: LobbyClientRig = await join_player(host, "Asha", played["ids"]["a"])
 	assert_eq(real.recorder.joined.size(), 1)
+	host.lobby.act({"type": "set_paused", "paused": false})  # do not wait for the others
 	real.client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "move"}))
 	assert_true(await pump(func() -> bool: return not host.recorder.game_messages.is_empty()), "first message confirms the new token")
 	real.client.session.transport.leave()
@@ -685,7 +688,7 @@ func test_resume_refuses_a_player_who_left_or_does_not_exist() -> void:
 	var a: LobbyClientRig = await join_player(host, "Asha")
 	var b: LobbyClientRig = await join_player(host, "Bo")
 	await _start_game_with(host, [a, b])
-	a.client.leave()
+	host.lobby.act({"type": "kick", "player_id": a.client.player_id})
 	await pump(func() -> bool: return host.state()["slots"][1]["left"])
 	var saved: Dictionary = host.lobby.snapshot({})
 	assert_eq(CoreResult.error_code((await resume_lobby(saved, a.client.player_id))[1]), ErrorCodes.PLAYER_LEFT)
@@ -781,3 +784,222 @@ func test_rejoin_does_not_need_the_game_id() -> void:
 	await pump(func() -> bool: return host.state()["slots"].size() == 1)
 	var a2: LobbyClientRig = await join_player(host, "Asha", identity)
 	assert_eq(a2.recorder.joined, [identity["player_id"]] as Array[String])
+
+
+# --- a guest comes back and the host decides --------------------------------------
+
+## Three players in a started game; returns {host, a, b, a_identity}. Asha has NOT dropped yet.
+func _started_game_of_three() -> Dictionary:
+	var host: LobbyHostRig = await start_lobby()
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	var b: LobbyClientRig = await join_player(host, "Bo")
+	await _start_game_with(host, [a, b])
+	return {"host": host, "a": a, "b": b, "a_identity": a.client.identity()}
+
+
+func _drop(host: LobbyHostRig, who: LobbyClientRig, slot_index: int) -> void:
+	who.client.session.transport.leave()  # the guest's app closed or crashed
+	assert_true(await pump(func() -> bool: return not host.state()["slots"][slot_index]["connected"]))
+
+
+func test_guest_who_lost_their_identity_asks_to_come_back_and_the_host_lets_them_in() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	assert_true(host.state()["paused"], "the game waits by default")
+	assert_eq(host.state()["slots"][1]["name"], "Asha", "the seat is still there")
+
+	# A restarted app: no saved identity, just the same name.
+	var back: LobbyClientRig = new_player(host, "Asha")
+	assert_true(await pump(func() -> bool: return not host.recorder.rejoin_requests.is_empty() and not back.recorder.waiting.is_empty()))
+	assert_eq(host.recorder.rejoin_requests, [{"player_id": g["a_identity"]["player_id"], "name": "Asha"}] as Array[Dictionary])
+	assert_eq(host.lobby.pending_rejoins().size(), 1)
+	assert_false(back.recorder.has_outcome(), "waiting for the host")
+
+	host.lobby.answer_rejoin(g["a_identity"]["player_id"], true)
+	assert_true(await pump(func() -> bool: return back.recorder.has_outcome()))
+	assert_eq(back.recorder.joined, [g["a_identity"]["player_id"]] as Array[String], "same player, same seat")
+	assert_true(await converge(host, [back, g["b"]]))
+	assert_true(host.state()["slots"][1]["connected"])
+	assert_false(host.state()["paused"], "everyone is back")
+	assert_eq(host.state()["slots"].size(), 3, "no extra seat")
+	assert_ne(back.client.identity()["rejoin_token"], g["a_identity"]["rejoin_token"])
+	assert_eq(host.lobby.pending_rejoins().size(), 0)
+
+
+func test_the_host_can_decline_and_the_seat_stays_open() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	var back: LobbyClientRig = new_player(host, "Asha")
+	await pump(func() -> bool: return not host.recorder.rejoin_requests.is_empty())
+	host.lobby.answer_rejoin(g["a_identity"]["player_id"], false)
+	assert_true(await pump(func() -> bool: return back.recorder.has_outcome()))
+	assert_eq(back.recorder.join_failures[0]["code"], ErrorCodes.CLAIM_DENIED)
+	assert_false(host.state()["slots"][1]["connected"])
+	assert_false(host.state()["slots"][1]["left"], "declining one request does not remove the player")
+	assert_true(host.state()["paused"])
+	# ...and they can still return with their saved identity, if they had one
+	var with_token: LobbyClientRig = await join_player(host, "Asha", g["a_identity"])
+	assert_eq(with_token.recorder.joined.size(), 1)
+
+
+func test_the_name_match_ignores_case_and_spaces_around_it() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	var back: LobbyClientRig = new_player(host, "  aSHA ")
+	await pump(func() -> bool: return not host.recorder.rejoin_requests.is_empty())
+	host.lobby.answer_rejoin(g["a_identity"]["player_id"], true)
+	assert_true(await pump(func() -> bool: return back.recorder.joined.size() == 1))
+
+
+func test_a_guest_who_pressed_leave_can_come_back_by_name_too() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	g["a"].client.leave()
+	assert_true(await pump(func() -> bool: return g["a"].recorder.left.size() >= 1 and not host.state()["slots"][1]["connected"]))
+	assert_false(host.state()["slots"][1]["left"])
+	var back: LobbyClientRig = new_player(host, "Asha")
+	await pump(func() -> bool: return not host.recorder.rejoin_requests.is_empty())
+	host.lobby.answer_rejoin(g["a_identity"]["player_id"], true)
+	assert_true(await pump(func() -> bool: return back.recorder.joined.size() == 1))
+	assert_true(host.state()["slots"][1]["connected"])
+
+
+func test_a_connected_players_name_cannot_be_claimed() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	var impostor: LobbyClientRig = await join_player(host, "Asha")
+	assert_eq(impostor.recorder.join_failures[0]["code"], ErrorCodes.GAME_IN_PROGRESS)
+	assert_eq(host.recorder.rejoin_requests.size(), 0, "the host is never even asked")
+	assert_true(host.state()["slots"][1]["connected"])
+
+
+func test_a_stranger_cannot_claim_a_seat_that_is_not_theirs() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	var stranger: LobbyClientRig = await join_player(host, "Mallory")
+	assert_eq(stranger.recorder.join_failures[0]["code"], ErrorCodes.GAME_IN_PROGRESS)
+	assert_eq(host.recorder.rejoin_requests.size(), 0)
+
+
+func test_a_removed_seat_cannot_be_claimed() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	assert_true(CoreResult.is_ok(host.lobby.act({"type": "kick", "player_id": g["a_identity"]["player_id"]})))
+	assert_false(host.state()["paused"], "nobody left to wait for")
+	var back: LobbyClientRig = await join_player(host, "Asha")
+	assert_eq(back.recorder.join_failures[0]["code"], ErrorCodes.GAME_IN_PROGRESS)
+	assert_eq(host.recorder.rejoin_requests.size(), 0)
+
+
+func test_in_an_open_lobby_a_returning_name_just_joins_normally() -> void:
+	var host: LobbyHostRig = await start_lobby()
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	a.client.session.transport.leave()
+	await pump(func() -> bool: return host.state()["slots"].size() == 1)
+	var again: LobbyClientRig = await join_player(host, "Asha")
+	assert_eq(again.recorder.joined.size(), 1)
+	assert_eq(host.recorder.rejoin_requests.size(), 0, "no question to ask before the game starts")
+
+
+func test_a_waiting_guest_can_cancel_and_the_host_prompt_goes_away() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	var back: LobbyClientRig = new_player(host, "Asha")
+	await pump(func() -> bool: return not host.recorder.rejoin_requests.is_empty())
+	back.client.leave_now()
+	assert_true(await pump(func() -> bool: return host.recorder.rejoin_cancelled.size() == 1))
+	assert_eq(host.lobby.pending_rejoins().size(), 0)
+	assert_true(host.state()["paused"])
+
+
+# --- wait or continue --------------------------------------------------------------
+
+func test_the_pause_reaches_every_player_and_game_traffic_is_refused_meanwhile() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	var b: LobbyClientRig = g["b"]
+	await _drop(host, g["a"], 1)
+	assert_true(await converge(host, [b]))
+	assert_true(b.client.state["paused"])
+	b.client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "roll"}))
+	assert_true(await pump(func() -> bool: return not b.recorder.action_failures.is_empty()))
+	assert_eq(b.recorder.action_failures[0]["code"], ErrorCodes.GAME_PAUSED)
+	assert_eq(b.recorder.action_failures[0]["action"], Protocol.T_GAME_ACTION)
+	assert_eq(host.recorder.game_messages.size(), 0, "the game never saw it")
+	assert_true(host.lobby.is_game_paused())
+
+
+func test_host_chooses_to_continue_and_the_game_runs_without_the_absent_player() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	var b: LobbyClientRig = g["b"]
+	await _drop(host, g["a"], 1)
+	assert_true(CoreResult.is_ok(host.lobby.act({"type": "set_paused", "paused": false})))
+	assert_true(await converge(host, [b]))
+	assert_false(b.client.state["paused"])
+	b.client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "roll"}))
+	assert_true(await pump(func() -> bool: return host.recorder.game_messages.size() == 1))
+	assert_false(host.lobby.is_game_paused())
+	assert_eq(LobbyLogic.away_players(host.state()).size(), 1, "Asha still owns her seat")
+
+
+func test_the_absent_player_can_still_return_after_the_host_chose_to_continue() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	host.lobby.act({"type": "set_paused", "paused": false})
+	var back: LobbyClientRig = await join_player(host, "Asha", g["a_identity"])
+	assert_eq(back.recorder.joined.size(), 1)
+	assert_true(host.state()["slots"][1]["connected"])
+	assert_false(host.state()["paused"])
+
+
+func test_only_the_host_decides_whether_to_wait() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	var b: LobbyClientRig = g["b"]
+	await _drop(host, g["a"], 1)
+	b.client.act({"type": "set_paused", "paused": false})
+	assert_true(await pump(func() -> bool: return not b.recorder.action_failures.is_empty()))
+	assert_eq(b.recorder.action_failures[0]["code"], ErrorCodes.NOT_HOST)
+	assert_true(host.state()["paused"])
+
+
+func test_host_removing_the_absent_player_ends_the_wait_for_good() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	var b: LobbyClientRig = g["b"]
+	await _drop(host, g["a"], 1)
+	host.lobby.act({"type": "kick", "player_id": g["a_identity"]["player_id"]})
+	assert_true(await converge(host, [b]))
+	assert_false(b.client.state["paused"])
+	assert_true(b.client.state["slots"][1]["left"])
+	var late: LobbyClientRig = await join_player(host, "Asha", g["a_identity"])
+	assert_eq(late.recorder.join_failures[0]["code"], ErrorCodes.PLAYER_LEFT)
+
+
+func test_a_second_player_dropping_pauses_again_after_the_host_continued() -> void:
+	var g: Dictionary = await _started_game_of_three()
+	var host: LobbyHostRig = g["host"]
+	await _drop(host, g["a"], 1)
+	host.lobby.act({"type": "set_paused", "paused": false})
+	await _drop(host, g["b"], 2)
+	assert_true(host.state()["paused"])
+	assert_eq(LobbyLogic.away_players(host.state()).size(), 2)
+
+
+func test_a_resumed_game_waits_until_everyone_has_come_back() -> void:
+	var played: Dictionary = await play_and_save({})
+	var host: LobbyHostRig = (await resume_lobby(played["snapshot"]))[0]
+	assert_true(host.state()["paused"])
+	var a: LobbyClientRig = await join_player(host, "Asha", played["ids"]["a"])
+	assert_true(host.state()["paused"], "Bo is still missing")
+	var b: LobbyClientRig = await join_player(host, "Bo", played["ids"]["b"])
+	assert_true(await converge(host, [a, b]))
+	assert_false(host.state()["paused"])

@@ -9,9 +9,11 @@ var action_failures: Array[Dictionary] = []  # {code, message, action}
 var started: int = 0
 var left: Array[Dictionary] = []  # {code, message}
 var game_messages: Array[Dictionary] = []
+var waiting: Array[String] = []
 
 
 func _init(client: LobbyClient) -> void:
+	client.waiting.connect(func(message: String) -> void: waiting.append(message))
 	client.joined.connect(func(player_id: String) -> void: joined.append(player_id))
 	client.join_failed.connect(func(code: String, message: String, host_info: Dictionary) -> void: join_failures.append({"code": code, "message": message, "host_info": host_info}))
 	client.state_changed.connect(func(state: Dictionary) -> void: states.append(state))
