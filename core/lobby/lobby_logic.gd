@@ -3,7 +3,7 @@ extends RefCounted
 ## Pure lobby rules: plain-data state in, Result out. No nodes, no networking, no
 ## timers (rule 2). State shape:
 ##   {phase, game_id, min_players, max_players, host_player_id, revision,
-##    paused, slots: [{player_id, name, ready, connected, left}]}
+##    min_active_players, paused, slots: [{player_id, name, ready, connected, left}]}
 ## apply() never mutates its input; on error the caller's state is untouched.
 ##
 ## Player actions (sent by clients):  set_ready {ready}, set_name {name}, leave,
@@ -17,6 +17,10 @@ extends RefCounted
 ## left=true). Returning players are recognised by their rejoin token, or by name if the
 ## host approves (see HostSession claims).
 ##
+## `min_active_players` is the fewest players present that the game can run with (from
+## the game's manifest; default = min_players). "Continue without waiting" is refused
+## below it, and removing players until fewer remain keeps the game paused.
+##
 ## The host (host_player_id) is always ready and cannot leave; if the host goes away
 ## the whole session ends (see HostSession.close), so there is no host transfer.
 
@@ -27,7 +31,7 @@ const PHASE_IN_GAME: String = "in_game"
 const PLAYER_ACTIONS: Array[String] = ["set_ready", "set_name", "leave", "start", "kick", "set_paused"]
 
 
-static func create(game_id: String, min_players: int, max_players: int, host_player_id: String, host_name: String) -> Dictionary:
+static func create(game_id: String, min_players: int, max_players: int, host_player_id: String, host_name: String, min_active_players: int = 0) -> Dictionary:
 	return {
 		"phase": PHASE_OPEN,
 		"game_id": game_id,
@@ -35,6 +39,7 @@ static func create(game_id: String, min_players: int, max_players: int, host_pla
 		"max_players": max_players,
 		"host_player_id": host_player_id,
 		"revision": 0,
+		"min_active_players": clampi(min_active_players if min_active_players > 0 else min_players, 1, min_players),
 		"paused": false,
 		"slots": [_new_slot(host_player_id, host_name, true)],
 	}
@@ -87,7 +92,7 @@ static func resume(state: Dictionary, host_player_id: String) -> Dictionary:
 		slot["connected"] = slot["player_id"] == host_player_id
 	next["slots"][index]["ready"] = true
 	next["host_player_id"] = host_player_id
-	next["paused"] = next["phase"] == PHASE_IN_GAME and not away_players(next).is_empty()
+	next["paused"] = next["phase"] == PHASE_IN_GAME and (not away_players(next).is_empty() or not can_continue(next))
 	next["revision"] = int(next["revision"]) + 1
 	return CoreResult.success({"state": next})
 
@@ -118,6 +123,25 @@ static func away_players(state: Dictionary) -> Array[Dictionary]:
 		if not slot["connected"] and not slot["left"]:
 			away.append(slot)
 	return away
+
+
+## Ids of the players who are present and still in the game, in seat order. This is
+## the list game rules take as `active_players` so turn order can skip absent players.
+static func active_players(state: Dictionary) -> Array[String]:
+	var ids: Array[String] = []
+	for slot: Dictionary in state["slots"]:
+		if slot["connected"] and not slot["left"]:
+			ids.append(slot["player_id"])
+	return ids
+
+
+static func min_active(state: Dictionary) -> int:
+	return int(state.get("min_active_players", state["min_players"]))
+
+
+## Can the game run with the players who are here right now?
+static func can_continue(state: Dictionary) -> bool:
+	return active_players(state).size() >= min_active(state)
 
 
 static func is_paused(state: Dictionary) -> bool:
@@ -213,7 +237,7 @@ static func _kick(state: Dictionary, player_id: String, action: Dictionary) -> D
 	if target == state["host_player_id"]:
 		return CoreResult.failure(ErrorCodes.HOST_CANNOT_LEAVE, "The host cannot be removed.")
 	_remove_or_mark_left(state, index)
-	_unpause_if_nobody_is_away(state)
+	_settle_pause(state)
 	return CoreResult.success()
 
 
@@ -227,6 +251,8 @@ static func _set_paused(state: Dictionary, player_id: String, action: Dictionary
 		return CoreResult.failure(ErrorCodes.BAD_ACTION, "set_paused needs a true/false 'paused'.")
 	if action["paused"] and away_players(state).is_empty():
 		return CoreResult.failure(ErrorCodes.NOTHING_TO_WAIT_FOR, "Everyone is here.")
+	if not action["paused"] and not can_continue(state):
+		return CoreResult.failure(ErrorCodes.TOO_FEW_PLAYERS, "The game needs at least %d players present to go on." % min_active(state))
 	state["paused"] = action["paused"]
 	return CoreResult.success()
 
@@ -251,7 +277,7 @@ static func _reconnected(state: Dictionary, player_id: String) -> Dictionary:
 	if state["slots"][index]["left"]:
 		return CoreResult.failure(ErrorCodes.PLAYER_LEFT, "This player has left the game.")
 	state["slots"][index]["connected"] = true
-	_unpause_if_nobody_is_away(state)
+	_settle_pause(state)
 	return CoreResult.success()
 
 
@@ -290,8 +316,15 @@ static func _mark_away(state: Dictionary, index: int) -> void:
 	state["paused"] = true
 
 
-static func _unpause_if_nobody_is_away(state: Dictionary) -> void:
-	if away_players(state).is_empty():
+## After someone returns or is removed: pause if the game cannot run with who is left;
+## otherwise resume once nobody is away. (If the host chose to continue while someone is
+## away, that choice stands.)
+static func _settle_pause(state: Dictionary) -> void:
+	if state["phase"] != PHASE_IN_GAME:
+		return
+	if not can_continue(state):
+		state["paused"] = true
+	elif away_players(state).is_empty():
 		state["paused"] = false
 
 

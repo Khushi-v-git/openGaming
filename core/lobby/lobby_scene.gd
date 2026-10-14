@@ -12,7 +12,8 @@ extends Control
 ## options:
 ##   app_version                 required
 ##   game_id                     the game to host (hosting only; joiners play the host's game)
-##   min_players, max_players    for hosting; default from the game's manifest if a registry is given
+##   min_players, max_players,
+##   min_active_players          for hosting; default from the game's manifest if a registry is given
 ##   game_registry               optional GameRegistry: used for display names, player limits
 ##                               and to tell a joiner clearly when this app lacks the host's game
 ##   game_title                  optional title when there is no registry
@@ -277,7 +278,7 @@ func host_session() -> void:
 	var config: Dictionary = _transport_config.duplicate()
 	if port_spin != null:
 		config["port"] = int(port_spin.value)
-	_host = LobbyHost.new(TransportFactory.create(config), str(options["app_version"]), game_id, cleaned["name"], limits["min"], limits["max"], options.get("session_options", {}))
+	_host = LobbyHost.new(TransportFactory.create(config), str(options["app_version"]), game_id, cleaned["name"], limits["min"], limits["max"], options.get("session_options", {}), limits["min_active"])
 	_host.hosting.connect(_on_hosting)
 	_host.host_failed.connect(_on_host_failed)
 	_host.state_changed.connect(_on_state_changed)
@@ -513,7 +514,11 @@ func _render_pause(is_host: bool) -> void:
 		notice_label.text = "Game paused: waiting for %s to come back." % ", ".join(names)
 	else:
 		notice_label.text = "%s is away; the game is continuing without them." % ", ".join(names)
-	continue_button.visible = is_host and paused
+	var can_go_on: bool = LobbyLogic.can_continue(_state)
+	if paused and not can_go_on:
+		notice_label.visible = true
+		notice_label.text = "Not enough players to go on: the game needs %d present. Waiting for %s." % [LobbyLogic.min_active(_state), ", ".join(names) if not names.is_empty() else "more players"]
+	continue_button.visible = is_host and paused and can_go_on
 	wait_button.visible = is_host and not paused and not away.is_empty()
 
 
@@ -530,8 +535,8 @@ func _player_limits(game_id: String) -> Dictionary:
 	var registry: GameRegistry = options.get("game_registry", null)
 	if registry != null and registry.has(game_id):
 		var manifest: Dictionary = registry.get_manifest(game_id)
-		return {"min": int(manifest["min_players"]), "max": int(manifest["max_players"])}
-	return {"min": int(options.get("min_players", 2)), "max": int(options.get("max_players", 4))}
+		return {"min": int(manifest["min_players"]), "max": int(manifest["max_players"]), "min_active": int(manifest["min_active_players"])}
+	return {"min": int(options.get("min_players", 2)), "max": int(options.get("max_players", 4)), "min_active": int(options.get("min_active_players", 0))}
 
 
 func _player_row(slot: Dictionary, my_id: String, is_host: bool) -> Control:

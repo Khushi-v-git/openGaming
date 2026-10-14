@@ -42,6 +42,7 @@ const PLAYER_LEFT: String = "PLAYER_LEFT"
 const BAD_ACTION: String = "BAD_ACTION"
 const GAME_PAUSED: String = "GAME_PAUSED"  # the host is waiting for a player who is away
 const NOTHING_TO_WAIT_FOR: String = "NOTHING_TO_WAIT_FOR"
+const TOO_FEW_PLAYERS: String = "TOO_FEW_PLAYERS"  # the game cannot run with only the players present
 
 # Client-side only (never sent on the wire)
 const CONNECT_FAILED: String = "CONNECT_FAILED"

@@ -21,6 +21,7 @@ func _make_scene(player_name: String, extra: Dictionary = {}) -> LobbyScene:
 		"app_version": "1.0.0",
 		"min_players": 2,
 		"max_players": 3,
+		"min_active_players": 1,  # these tests are about the host's wait/continue choice, not the minimum
 		"transport": {"transport": "loopback", "hub": hub},
 		"player_name": player_name,
 	}
@@ -630,3 +631,21 @@ func test_five_and_eight_player_lobbies_fit_at_1280x720() -> void:
 		for child: Node in (made[0] as SubViewport).get_children():
 			child.queue_free()
 		await get_tree().process_frame
+
+
+func test_continue_is_not_offered_when_too_few_players_would_remain() -> void:
+	var host: LobbyScene = _make_scene("Hosty", {"min_active_players": 2})
+	await _start_hosting(host)
+	var guest: LobbyScene = _make_scene("Asha")
+	guest.address_edit.text = host.shared_address
+	guest.join_button.pressed.emit()
+	await _until(func() -> bool: return host.players_box.get_child_count() == 2)
+	guest.ready_button.button_pressed = true
+	await _until(func() -> bool: return not host.start_button.disabled)
+	host.start_button.pressed.emit()
+	await _until(func() -> bool: return guest.ready_button.disabled)
+	guest._client.session.transport.leave()
+	assert_true(await _until(func() -> bool: return host.notice_label.visible))
+	assert_string_contains(host.notice_label.text, "Not enough players")
+	assert_string_contains(host.notice_label.text, "needs 2")
+	assert_false(host.continue_button.visible, "the host cannot choose to go on with one player")

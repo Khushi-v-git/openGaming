@@ -30,12 +30,12 @@ var _game_id: String
 var _started: bool = false
 
 
-func _init(transport: Transport, app_version: String, game_id: String, host_name: String, min_players: int, max_players: int, session_options: Dictionary = {}) -> void:
+func _init(transport: Transport, app_version: String, game_id: String, host_name: String, min_players: int, max_players: int, session_options: Dictionary = {}, min_active_players: int = 0) -> void:
 	_app_version = app_version
 	_game_id = game_id
 	session = HostSession.new(transport, app_version, game_id, session_options)
 	local_player_id = session.registry.create(host_name)["player_id"]
-	state = LobbyLogic.create(game_id, min_players, max_players, local_player_id, host_name)
+	state = LobbyLogic.create(game_id, min_players, max_players, local_player_id, host_name, min_active_players)
 	session.admission_policy = _admission
 	session.rejoin_policy = _rejoin_policy
 	session.claim_policy = _claim_policy
@@ -117,6 +117,12 @@ func pending_rejoins() -> Array[Dictionary]:
 	for player_id: String in session.pending_claims():
 		out.append({"player_id": player_id, "name": session.registry.name_of(player_id)})
 	return out
+
+
+## Who is present and still in the game, in seat order: pass this to the game rules as
+## `active_players` so they skip absent players.
+func active_players() -> Array[String]:
+	return LobbyLogic.active_players(state)
 
 
 func is_game_paused() -> bool:

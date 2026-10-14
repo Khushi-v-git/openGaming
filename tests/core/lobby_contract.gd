@@ -18,9 +18,9 @@ class LobbyClientRig:
 	var recorder: LobbyClientRecorder
 
 
-func start_lobby(min_players: int = 2, max_players: int = 4, options: Dictionary = {}) -> LobbyHostRig:
+func start_lobby(min_players: int = 2, max_players: int = 4, options: Dictionary = {}, min_active: int = 0) -> LobbyHostRig:
 	var rig: LobbyHostRig = LobbyHostRig.new()
-	rig.lobby = LobbyHost.new(env.make_transport(), APP, GAME, "Hosty", min_players, max_players, options)
+	rig.lobby = LobbyHost.new(env.make_transport(), APP, GAME, "Hosty", min_players, max_players, options, min_active)
 	rig.lobby.session.clock = clock.as_callable()
 	rig.recorder = LobbyHostRecorder.new(rig.lobby)
 	var result: Dictionary = rig.lobby.start(env.host_config())
@@ -1042,3 +1042,47 @@ func test_eight_players_can_join_and_all_see_the_same_lobby() -> void:
 	assert_eq(host.state()["slots"].size(), 8)
 	for guest: LobbyClientRig in guests:
 		assert_eq(guest.client.state, host.state())
+
+
+# --- the active player list and the minimum ---------------------------------------
+
+func test_the_host_hands_the_game_the_players_who_are_present() -> void:
+	var host: LobbyHostRig = await start_lobby(2, 4, {}, 2)
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	var b: LobbyClientRig = await join_player(host, "Bo")
+	await _start_game_with(host, [a, b])
+	var ids: Array[String] = [host.lobby.local_player_id, a.client.player_id, b.client.player_id]
+	assert_eq(host.lobby.active_players(), ids)
+	await _drop(host, a, 1)
+	assert_eq(host.lobby.active_players(), [ids[0], ids[2]] as Array[String], "Asha is skipped, Bo keeps their seat")
+	var back: LobbyClientRig = await join_player(host, "Asha", a.client.identity())
+	assert_eq(back.recorder.joined.size(), 1)
+	assert_eq(host.lobby.active_players(), ids, "back in seat order")
+
+
+func test_continue_works_down_to_the_games_minimum_and_no_further() -> void:
+	var host: LobbyHostRig = await start_lobby(3, 4, {}, 2)
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	var b: LobbyClientRig = await join_player(host, "Bo")
+	await _start_game_with(host, [a, b])
+	await _drop(host, a, 1)
+	assert_true(CoreResult.is_ok(host.lobby.act({"type": "set_paused", "paused": false})), "2 of 3 present, the game needs 2")
+	await _drop(host, b, 2)
+	assert_true(host.state()["paused"], "down to 1 present: paused again")
+	assert_eq(CoreResult.error_code(host.lobby.act({"type": "set_paused", "paused": false})), ErrorCodes.TOO_FEW_PLAYERS)
+
+
+func test_a_game_that_needs_everyone_cannot_continue_without_a_player() -> void:
+	var host: LobbyHostRig = await start_lobby(3, 3)  # min_active defaults to min_players
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	var b: LobbyClientRig = await join_player(host, "Bo")
+	await _start_game_with(host, [a, b])
+	await _drop(host, a, 1)
+	assert_eq(CoreResult.error_code(host.lobby.act({"type": "set_paused", "paused": false})), ErrorCodes.TOO_FEW_PLAYERS)
+	b.client.act({"type": "set_paused", "paused": false})
+	assert_true(await pump(func() -> bool: return not b.recorder.action_failures.is_empty()))
+	assert_eq(b.recorder.action_failures[0]["code"], ErrorCodes.NOT_HOST)
+	assert_true(host.lobby.is_game_paused())
+	var back: LobbyClientRig = await join_player(host, "Asha", a.client.identity())
+	assert_eq(back.recorder.joined.size(), 1)
+	assert_false(host.state()["paused"], "everyone is back")

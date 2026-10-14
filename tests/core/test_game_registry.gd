@@ -250,3 +250,25 @@ func test_games_with_five_or_more_players_are_fine() -> void:
 		var r: Dictionary = GameManifest.validate(data, ALPHA_DIR)
 		assert_true(CoreResult.is_ok(r), "counts %s" % str(pair))
 		assert_true(GameManifest.supports_player_count(r["manifest"], 5) == (pair[0] <= 5 and pair[1] >= 5))
+
+
+func test_min_active_players_defaults_to_min_players() -> void:
+	var r: Dictionary = GameManifest.validate(_alpha(), ALPHA_DIR)
+	assert_eq(r["manifest"]["min_active_players"], r["manifest"]["min_players"])
+
+
+func test_min_active_players_can_be_lower_than_min_players() -> void:
+	var data: Dictionary = _alpha()
+	data["min_players"] = 4
+	data["max_players"] = 6
+	data["min_active_players"] = 2
+	var r: Dictionary = GameManifest.validate(data, ALPHA_DIR)
+	assert_true(CoreResult.is_ok(r))
+	assert_eq(r["manifest"]["min_active_players"], 2)
+
+
+func test_bad_min_active_players_are_refused() -> void:
+	for bad: Variant in [0, -1, 3, "2", 1.5, null]:
+		var data: Dictionary = _alpha()  # min_players 2
+		data["min_active_players"] = bad
+		assert_eq(_error_of(data), GameManifest.INVALID_MANIFEST, "min_active_players %s" % str(bad))

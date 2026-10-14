@@ -92,6 +92,15 @@ In a started game a player who drops, closes the app or presses Leave **keeps th
   and they may still return. If someone else drops, the host is asked again;
 - **Remove** (`kick`): the seat is gone for good (`left`), the wait ends, the token is dead.
 
+**Who plays on.** `LobbyHost.active_players()` (`LobbyLogic.active_players(state)`) is the list
+of players present and still in the game, in seat order. Game rules take it as their
+`active_players` argument and use `TurnOrder.next_active(order, current, active)` to rotate,
+skipping absent players; they keep their seat and are skipped only while away. A game's manifest
+can declare `min_active_players` (default `min_players`): "Continue without waiting" is refused
+with `TOO_FEW_PLAYERS` when fewer would be present, and removing players below it keeps the game
+paused. Example: a 4-player game that can run with 2 sets `min_active_players: 2`; a strict
+2-player game keeps the default and simply waits.
+
 While paused, `LobbyHost` answers players' game traffic with `lobby_error GAME_PAUSED`
 instead of passing it up; the host's own game code must check `LobbyHost.is_game_paused()`.
 A resumed save starts paused until everyone offline has returned.

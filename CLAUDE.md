@@ -52,7 +52,13 @@ docs/
 
 2. **Game rules are pure logic.** Rules live in plain scripts that extend
    RefCounted, with no dependency on scene nodes, UI, networking or timers.
-   Core shape: `apply(state, player_id, action) -> Result`, where Result is a
+   Core shape: `apply(state, player_id, action, active_players) -> Result`.
+   `active_players` is the list of player ids who are present and still in the
+   game, in seat order (`LobbyHost.active_players()`); turn rotation must skip
+   everyone else (see `TurnOrder`), and absent players keep their seat and get
+   their turn back when they return. A game declares `min_active_players` in
+   its manifest (default: `min_players`), the fewest present players it can run
+   with; the host cannot "continue without waiting" below it. Result is a
    plain dict `{ok: bool, state: Dictionary, error: {code, message}}` (`state`
    when ok, `error` when not; on error the input state is unchanged). All
    randomness comes from a seeded RandomNumberGenerator passed in, so results

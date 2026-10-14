@@ -404,3 +404,85 @@ func test_older_saved_states_without_paused_still_work() -> void:
 	assert_false(LobbyLogic.is_paused(s))
 	var after: Dictionary = _apply_ok(s, "p2", {"type": "disconnected"})
 	assert_true(after["paused"])
+
+
+# --- who is active, and how few the game can run with ------------------------------
+
+func _three_player_game(min_active: int) -> Dictionary:
+	var s: Dictionary = LobbyLogic.create("g", 3, 4, "p1", "Host", min_active)
+	for entry: Array in [["p2", "Bo"], ["p3", "Cy"]]:
+		s = _join(s, entry[0], entry[1])
+		s = _apply_ok(s, entry[0], {"type": "set_ready", "ready": true})
+	return _apply_ok(s, "p1", {"type": "start"})
+
+
+func test_min_active_defaults_to_min_players_and_is_kept_in_range() -> void:
+	assert_eq(LobbyLogic.create("g", 3, 4, "p1", "H")["min_active_players"], 3)
+	assert_eq(LobbyLogic.create("g", 3, 4, "p1", "H", 2)["min_active_players"], 2)
+	assert_eq(LobbyLogic.create("g", 3, 4, "p1", "H", 9)["min_active_players"], 3, "never above min_players")
+	assert_eq(LobbyLogic.create("g", 3, 4, "p1", "H", -5)["min_active_players"], 3)
+	assert_eq(LobbyLogic.min_active({"min_players": 2}), 2, "older states without the field")
+
+
+func test_active_players_are_the_present_ones_in_seat_order() -> void:
+	var s: Dictionary = _three_player_game(2)
+	assert_eq(LobbyLogic.active_players(s), ["p1", "p2", "p3"] as Array[String])
+	s = _apply_ok(s, "p2", {"type": "disconnected"})
+	assert_eq(LobbyLogic.active_players(s), ["p1", "p3"] as Array[String])
+	s = _apply_ok(s, "p2", {"type": "reconnected"})
+	assert_eq(LobbyLogic.active_players(s), ["p1", "p2", "p3"] as Array[String], "back in their own seat")
+
+
+func test_removed_players_are_not_active() -> void:
+	var s: Dictionary = _three_player_game(2)
+	s = _apply_ok(s, "p1", {"type": "kick", "player_id": "p3"})
+	assert_eq(LobbyLogic.active_players(s), ["p1", "p2"] as Array[String])
+
+
+func test_continue_is_allowed_while_enough_players_remain() -> void:
+	var s: Dictionary = _apply_ok(_three_player_game(2), "p2", {"type": "disconnected"})
+	assert_true(LobbyLogic.can_continue(s))
+	s = _apply_ok(s, "p1", {"type": "set_paused", "paused": false})
+	assert_false(s["paused"])
+
+
+func test_continue_is_refused_when_too_few_remain() -> void:
+	var s: Dictionary = _apply_ok(_three_player_game(3), "p2", {"type": "disconnected"})
+	assert_false(LobbyLogic.can_continue(s))
+	assert_eq(_code(s, "p1", {"type": "set_paused", "paused": false}), ErrorCodes.TOO_FEW_PLAYERS)
+	assert_true(s["paused"])
+
+
+func test_a_second_drop_can_push_the_game_below_its_minimum() -> void:
+	var s: Dictionary = _apply_ok(_three_player_game(2), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "set_paused", "paused": false})
+	s = _apply_ok(s, "p3", {"type": "disconnected"})
+	assert_true(s["paused"])
+	assert_eq(_code(s, "p1", {"type": "set_paused", "paused": false}), ErrorCodes.TOO_FEW_PLAYERS)
+
+
+func test_removing_players_below_the_minimum_keeps_the_game_paused() -> void:
+	var s: Dictionary = _apply_ok(_three_player_game(3), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "kick", "player_id": "p2"})
+	assert_true(s["paused"], "nobody is away any more, but 2 players cannot run a 3-player game")
+	assert_eq(LobbyLogic.away_players(s).size(), 0)
+	assert_false(LobbyLogic.can_continue(s))
+
+
+func test_removing_a_player_while_enough_remain_resumes_the_game() -> void:
+	var s: Dictionary = _apply_ok(_three_player_game(2), "p2", {"type": "disconnected"})
+	s = _apply_ok(s, "p1", {"type": "kick", "player_id": "p2"})
+	assert_false(s["paused"])
+
+
+func test_kicking_a_present_player_below_the_minimum_pauses() -> void:
+	var s: Dictionary = _three_player_game(3)
+	s = _apply_ok(s, "p1", {"type": "kick", "player_id": "p3"})
+	assert_true(s["paused"])
+
+
+func test_a_resumed_save_below_its_minimum_stays_paused() -> void:
+	var s: Dictionary = _three_player_game(2)
+	var resumed: Dictionary = LobbyLogic.resume(s, "p1")["state"]
+	assert_eq(LobbyLogic.active_players(resumed), ["p1"] as Array[String])
+	assert_true(resumed["paused"])

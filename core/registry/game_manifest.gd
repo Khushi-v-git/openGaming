@@ -10,6 +10,8 @@ extends RefCounted
 ##   "description": "...",                 optional
 ##   "icon": "res://games/<id>/assets/icon.svg",
 ##   "min_players": 2, "max_players": 4,
+##   "min_active_players": 2,              optional: the fewest players present the game can
+##                                         run with when someone drops; default = min_players
 ##   "rules_class": "res://games/<id>/rules/<file>.gd",   extends RefCounted (rule 2)
 ##   "ui_scene": "res://games/<id>/ui/<file>.tscn"
 ## }
@@ -43,6 +45,10 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 	if min_players < 1 or max_players < min_players or max_players > MAX_PLAYERS_LIMIT:
 		return _bad("Player counts must satisfy 1 <= min_players <= max_players <= %d." % MAX_PLAYERS_LIMIT)
 
+	var min_active: Variant = data.get("min_active_players", min_players)
+	if typeof(min_active) != TYPE_INT or min_active < 1 or min_active > min_players:
+		return _bad("'min_active_players' must be a whole number from 1 to min_players.")
+
 	var icon: Dictionary = _check_path(data, "icon", game_dir, [])
 	if not CoreResult.is_ok(icon):
 		return icon
@@ -63,6 +69,7 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 		"icon": icon["path"],
 		"min_players": min_players,
 		"max_players": max_players,
+		"min_active_players": min_active,
 		"rules_class": rules["path"],
 		"ui_scene": scene["path"],
 	}})
