@@ -30,6 +30,10 @@ games/
     assets/                game-specific art
     tests/
 main/                      home screen, game picker, app settings
+tests/
+  core/                    tests for core/ (games keep theirs in games/*/tests)
+addons/
+  gut/                     GUT test framework (approved addon)
 docs/
 ```
 - core/ must never import from games/ or main/.
@@ -48,13 +52,18 @@ docs/
 
 2. **Game rules are pure logic.** Rules live in plain scripts that extend
    RefCounted, with no dependency on scene nodes, UI, networking or timers.
-   Core shape: `apply(state, player_id, action) -> new_state | error`. All
+   Core shape: `apply(state, player_id, action) -> Result`, where Result is a
+   plain dict `{ok: bool, state: Dictionary, error: {code, message}}` (`state`
+   when ok, `error` when not; on error the input state is unchanged). All
    randomness comes from a seeded RandomNumberGenerator passed in, so results
    are reproducible. Rules must be unit-testable with no window and no network.
 
 3. **Transport is an interface.** All networking goes through one small
-   interface: `send(peer_id, message)`, `broadcast(message)`, `on_message`,
-   `on_peer_connected`, `on_peer_disconnected`. Game and lobby code must never
+   interface: `send(peer_id, message)`, `broadcast(message)`,
+   `disconnect_peer(peer_id)`, `poll()` (the owner calls it every frame), and
+   the signals `message_received`, `peer_connected`, `peer_disconnected`,
+   `join_succeeded`, `join_failed` (joining is asynchronous). On a client the
+   host is always `HOST_PEER_ID`. Game and lobby code must never
    reference a concrete socket, IP address or Godot RPC. Implementations
    (WebSocket/TCP for direct and tunnel use, a relay client later) are
    interchangeable behind the interface.
@@ -83,8 +92,9 @@ docs/
    or tunnel URLs. The host's listening port is a setting.
 
 6. **Version handshake.** On connect, peers exchange `app_version`, `game_id`
-   and `protocol_version`. Mismatches produce a clear in-app error, never
-   undefined behavior.
+   and `protocol_version`. In v1 all three must match exactly (loosening
+   `app_version` to major.minor is a later decision). Mismatches produce a
+   clear in-app error with an error code, never undefined behavior.
 
 7. **Reconnect support.** Every player has a stable `player_id` and a secret
    rejoin token. If a connection drops, the player can rejoin and the host
@@ -105,7 +115,8 @@ docs/
     never decide outcomes.
 
 11. **Small, infrequent messages.** Send actions and state snapshots or deltas
-    on turn boundaries. Never stream per-frame data.
+    on turn boundaries. Never stream per-frame data. The one allowed exception
+    is a single full-state resend to a player who rejoins.
 
 12. **UI never decides rules.** UI scenes display state and emit actions. They
     contain no game logic.
@@ -121,6 +132,19 @@ docs/
   second transport. It must require no changes to game code.
 - The host needs a PC that stays on and awake. If the host leaves for good the
   game ends unless it was saved (see rule 8).
+- Closing and leaving are polite, two-step operations, because a close frame
+  can overtake the last message on some transports (Godot's WebSocketPeer
+  drops unread packets when a close frame arrives in the same poll):
+  - `HostSession.close()` / `LobbyHost.close()` sends `session_end` to every
+    player, then stops hosting once they have left or `close_grace_msec`
+    passes. The owner must keep calling `poll()` until the `closed` signal
+    fires. `close_now()` stops immediately; players then see a lost connection.
+  - `LobbyClient.leave()` sends a `leave` action and waits (up to 1.5 s) for
+    the host to close the connection; `left` fires with code `LEFT`.
+    `leave_now()` drops the connection immediately and the host sees a lost
+    connection instead of a leave.
+  - `Transport.disconnect_peer()` must still deliver messages sent just before
+    it; a transport may give the peer a short grace period to close first.
 
 ## Climb and Slither (first game)
 - Board data (snake and ladder start/end squares) lives in a data file, not in
