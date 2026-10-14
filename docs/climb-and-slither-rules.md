@@ -19,6 +19,12 @@ Everything is plain data, so it saves, replays and fuzzes. Classes:
 | `extra_turn_on_six` | false | roll again after a 6 (either die with two dice); no cap |
 | `dice_count` | 1 | 1 or 2. `exact_finish` needs 1 (with two dice the square before the last could never be finished) |
 
+**For the host settings screen:** "exact finish" and "2 dice" exclude each other. The screen must
+not decide that itself: call `ClimbSettings.option_states(current_settings)`, which returns
+`{exact_finish: {enabled, tooltip}, two_dice: {enabled, tooltip}}`. Grey out whatever is not
+`enabled` and show its `tooltip` (an option that is already chosen stays enabled so it can be
+switched off). `ClimbSettings.normalize` still refuses the combination as a second line of defence.
+
 ## Board rules
 
 Every start square is unique and is not square 1 or the last square; snakes go down, ladders go

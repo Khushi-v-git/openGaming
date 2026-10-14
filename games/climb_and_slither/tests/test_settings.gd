@@ -74,3 +74,59 @@ func test_normalize_does_not_change_its_input_and_returns_a_fresh_copy() -> void
 
 func test_settings_are_plain_data() -> void:
 	assert_true(Envelope.is_plain_data(ClimbSettings.normalize({"dice_count": 2})["settings"]))
+
+
+# --- what a settings screen should grey out ---------------------------------------------------
+
+func test_with_the_defaults_both_options_are_available() -> void:
+	var states: Dictionary = ClimbSettings.option_states(ClimbSettings.defaults())
+	assert_true(states["exact_finish"]["enabled"])
+	assert_true(states["two_dice"]["enabled"])
+	assert_eq(states["exact_finish"]["tooltip"], "")
+	assert_eq(states["two_dice"]["tooltip"], "")
+
+
+func test_choosing_exact_finish_greys_out_two_dice_with_a_tooltip() -> void:
+	var states: Dictionary = ClimbSettings.option_states({"exact_finish": true, "dice_count": 1})
+	assert_false(states["two_dice"]["enabled"])
+	assert_eq(states["two_dice"]["tooltip"], ClimbSettings.TWO_DICE_NEEDS_NO_EXACT_FINISH)
+	assert_true(states["exact_finish"]["enabled"], "the chosen option stays enabled so it can be switched off")
+	assert_eq(states["exact_finish"]["tooltip"], "")
+
+
+func test_choosing_two_dice_greys_out_exact_finish_with_a_tooltip() -> void:
+	var states: Dictionary = ClimbSettings.option_states({"exact_finish": false, "dice_count": 2})
+	assert_false(states["exact_finish"]["enabled"])
+	assert_eq(states["exact_finish"]["tooltip"], ClimbSettings.EXACT_FINISH_NEEDS_ONE_DIE)
+	assert_true(states["two_dice"]["enabled"], "the chosen option stays enabled so it can be switched off")
+
+
+func test_the_tooltips_are_short() -> void:
+	assert_lt(ClimbSettings.EXACT_FINISH_NEEDS_ONE_DIE.length(), 60)
+	assert_lt(ClimbSettings.TWO_DICE_NEEDS_NO_EXACT_FINISH.length(), 60)
+
+
+func test_a_screen_that_follows_option_states_can_never_build_a_refused_combination() -> void:
+	# Simulate a user clicking around: every click is only allowed if option_states enables it.
+	var settings: Dictionary = ClimbSettings.defaults()
+	var prng: Prng = Prng.new(5)
+	for _i: int in 400:
+		var states: Dictionary = ClimbSettings.option_states(settings)
+		match prng.range_int(0, 3):
+			0:  # toggle exact finish
+				if states["exact_finish"]["enabled"]:
+					settings["exact_finish"] = not settings["exact_finish"]
+			1:  # pick two dice
+				if states["two_dice"]["enabled"]:
+					settings["dice_count"] = 2
+			2:  # pick one die (always available)
+				settings["dice_count"] = 1
+			3:  # toggle extra turn on six (independent)
+				settings["extra_turn_on_six"] = not settings["extra_turn_on_six"]
+		assert_true(CoreResult.is_ok(ClimbSettings.normalize(settings)), "reached a refused combination: %s" % str(settings))
+
+
+func test_option_states_copes_with_missing_or_odd_settings() -> void:
+	assert_true(ClimbSettings.option_states({})["exact_finish"]["enabled"])
+	assert_true(ClimbSettings.option_states({"dice_count": "2"})["exact_finish"]["enabled"], "junk is not treated as two dice")
+	assert_true(ClimbSettings.option_states({"exact_finish": 1})["two_dice"]["enabled"], "junk is not treated as exact finish")
