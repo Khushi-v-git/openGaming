@@ -16,6 +16,8 @@ extends RefCounted
 ##   "ui_scene": "res://games/<id>/ui/<file>.tscn"   optional while the game is in
 ##                                         development; without it the game is registered but
 ##                                         not playable, and the home screen leaves it out
+##   "settings_scene": "res://games/<id>/ui/<file>.tscn"   optional: the game's own house-rules
+##                                         panel, shown to the host before the game starts
 ## }
 ##
 ## Every path must be inside the game's own folder and must exist, so a manifest can
@@ -57,15 +59,12 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 	var rules: Dictionary = _check_path(data, "rules_class", game_dir, ["gd"])
 	if not CoreResult.is_ok(rules):
 		return rules
-	var scene_path: String = ""
-	if data.has("ui_scene"):
-		if typeof(data["ui_scene"]) != TYPE_STRING:
-			return _bad("'ui_scene' must be a path or left out.")
-		if data["ui_scene"] != "":
-			var scene: Dictionary = _check_path(data, "ui_scene", game_dir, ["tscn", "scn"])
-			if not CoreResult.is_ok(scene):
-				return scene
-			scene_path = scene["path"]
+	var ui: Dictionary = _optional_scene(data, "ui_scene", game_dir)
+	if not CoreResult.is_ok(ui):
+		return ui
+	var settings_scene: Dictionary = _optional_scene(data, "settings_scene", game_dir)
+	if not CoreResult.is_ok(settings_scene):
+		return settings_scene
 	var rules_check: Dictionary = _check_rules_script(rules["path"])
 	if not CoreResult.is_ok(rules_check):
 		return rules_check
@@ -79,7 +78,8 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 		"max_players": max_players,
 		"min_active_players": min_active,
 		"rules_class": rules["path"],
-		"ui_scene": scene_path,  # "" = no UI yet
+		"ui_scene": ui["path"],  # "" = no UI yet
+		"settings_scene": settings_scene["path"],  # "" = the game has no settings screen
 	}})
 
 
@@ -105,6 +105,18 @@ static func _is_valid_id(id: String) -> bool:
 		if not (is_lower or is_digit or c == 95):
 			return false
 	return true
+
+
+## An optional scene field: absent or "" gives path ""; anything else must be a real scene
+## inside the game's folder.
+static func _optional_scene(data: Dictionary, field: String, game_dir: String) -> Dictionary:
+	if not data.has(field):
+		return CoreResult.success({"path": ""})
+	if typeof(data[field]) != TYPE_STRING:
+		return _bad("'%s' must be a path or left out." % field)
+	if data[field] == "":
+		return CoreResult.success({"path": ""})
+	return _check_path(data, field, game_dir, ["tscn", "scn"])
 
 
 static func _check_path(data: Dictionary, field: String, game_dir: String, extensions: Array[String]) -> Dictionary:

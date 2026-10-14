@@ -1,5 +1,5 @@
 class_name ClimbAndSlitherRules
-extends RefCounted
+extends GameRules
 ## Climb and Slither (a Snakes and Ladders game): the rules, as pure logic (rule 2).
 ## No nodes, no UI, no networking, no timers. Randomness comes from core's Prng, whose
 ## seed and state live in the game state.
@@ -185,6 +185,19 @@ func view_for(state: Dictionary, player_id: String) -> Dictionary:
 			view[key] = state[key].duplicate(true) if state[key] is Array or state[key] is Dictionary else state[key]
 	view["you"] = player_id
 	return view
+
+
+## The GameRules queries, answered from a state or from a view.
+func is_finished(state_or_view: Dictionary) -> bool:
+	return state_or_view.get("phase", "") == PHASE_FINISHED
+
+
+func current_player(state_or_view: Dictionary) -> String:
+	return "" if is_finished(state_or_view) else String(state_or_view.get("current_player", ""))
+
+
+func winner(state_or_view: Dictionary) -> String:
+	return String(state_or_view.get("winner", ""))
 
 
 ## Hands the turn on if the current player is not among the active players (they dropped

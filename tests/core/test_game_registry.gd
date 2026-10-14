@@ -306,6 +306,20 @@ func test_a_ui_scene_that_is_given_is_still_checked() -> void:
 		assert_eq(_error_of(data), GameManifest.INVALID_MANIFEST, "ui_scene %s" % str(bad))
 
 
+func test_settings_scene_is_optional_and_checked_like_ui_scene() -> void:
+	var data: Dictionary = _alpha()
+	data.erase("settings_scene")
+	assert_eq(GameManifest.validate(data, ALPHA_DIR)["manifest"]["settings_scene"], "")
+	data["settings_scene"] = data["ui_scene"]
+	var ok: Dictionary = GameManifest.validate(data, ALPHA_DIR)
+	assert_true(CoreResult.is_ok(ok), str(ok))
+	assert_eq(ok["manifest"]["settings_scene"], data["ui_scene"])
+	for bad: Variant in [ALPHA_DIR + "/nope.tscn", "res://core/lobby/lobby_scene.tscn", 5, ["a"], ALPHA_DIR + "/rules.gd"]:
+		var broken: Dictionary = _alpha()
+		broken["settings_scene"] = bad
+		assert_eq(_error_of(broken), GameManifest.INVALID_MANIFEST, "settings_scene %s" % str(bad))
+
+
 func test_the_home_screen_list_only_has_games_with_a_ui() -> void:
 	var registry: GameRegistry = _loaded()
 	assert_eq(registry.count(), 3)

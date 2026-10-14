@@ -128,7 +128,7 @@ func test_the_rules_use_no_engine_state_nodes_timers_or_other_randomness() -> vo
 		var source: String = FileAccess.get_file_as_string("res://games/climb_and_slither/rules/" + file)
 		for word: String in forbidden:
 			assert_false(source.contains(word), "%s must not use '%s'" % [file, word])
-		assert_true(source.contains("extends RefCounted"), "%s extends RefCounted" % file)
+		assert_true(source.contains("extends RefCounted") or source.contains("extends GameRules"), "%s extends RefCounted (or GameRules, which does)" % file)
 	assert_gte(checked, 5, "all the rules files were scanned")
 
 
