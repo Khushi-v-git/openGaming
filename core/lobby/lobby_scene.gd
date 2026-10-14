@@ -421,6 +421,8 @@ func _render() -> void:
 		child.queue_free()
 	for slot: Dictionary in _state["slots"]:
 		players_box.add_child(_player_row(slot, my_id, is_host))
+		if slot["player_id"] == my_id:
+			ready_button.set_pressed_no_signal(bool(slot["ready"]))  # the toggle mirrors the host's state
 	var started: bool = _state["phase"] == LobbyLogic.PHASE_IN_GAME
 	ready_button.disabled = started
 	if started:

@@ -132,6 +132,21 @@ func test_start_button_follows_readiness_and_starts_both_screens() -> void:
 	assert_true(guest.ready_button.disabled)
 
 
+func test_ready_toggle_mirrors_the_host_after_leaving_and_joining_again() -> void:
+	var pair: Array[LobbyScene] = await _host_and_guest()
+	var host: LobbyScene = pair[0]
+	var guest: LobbyScene = pair[1]
+	guest.ready_button.button_pressed = true
+	assert_true(await _until(func() -> bool: return _row_text(host, 1) == "Asha | Ready"))
+	guest.leave_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return guest.start_view.visible))
+	guest.address_edit.text = host.shared_address
+	guest.join_button.pressed.emit()
+	assert_true(await _until(func() -> bool: return guest.lobby_view.visible and guest.players_box.get_child_count() == 2))
+	assert_eq(_row_text(guest, 1), "Asha (you) | Not ready")
+	assert_false(guest.ready_button.button_pressed, "a fresh join starts not ready")
+
+
 func test_unknown_address_returns_to_start_with_a_message() -> void:
 	var guest: LobbyScene = _make_scene("Asha")
 	guest.address_edit.text = "no-such-session"
