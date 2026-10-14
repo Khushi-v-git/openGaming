@@ -406,15 +406,29 @@ func test_big_boards_are_checked_quickly() -> void:
 
 # --- the validator against a separately written check, on many random boards -----------------------
 
-## Winnability by repeated relaxation until nothing changes: deliberately a different algorithm
-## from the validator's queue search, written from the rule ("rolls 1..6 for one die, 2..12 for
-## two dice, plus jumps, from square 0; an overshoot does not move").
-func _independent_winnable(board: Dictionary, dice: int = 1) -> bool:
-	var size: int = board["size"]
+## Where a roll of `total` takes a player standing on `square`: the new square after any jump.
+## With exact finish an overshooting roll does not move; without it the player lands on the last
+## square. Written separately from the validator, from the rules text.
+func _landing(jump_to: Dictionary, size: int, square: int, total: int, exact: bool) -> int:
+	var target: int = square + total
+	if target > size:
+		return square if exact else size
+	return jump_to.get(target, target)
+
+
+func _jump_map(board: Dictionary) -> Dictionary:
 	var jump_to: Dictionary = {}
 	for kind_list: Array in [board["snakes"], board["ladders"]]:
 		for jump: Dictionary in kind_list:
 			jump_to[int(jump["from"])] = int(jump["to"])
+	return jump_to
+
+
+## Winnability by repeated relaxation until nothing changes: deliberately a different algorithm
+## from the validator's queue search. `dice` 1 means rolls 1..6, 2 means rolls 2..12.
+func _independent_winnable(board: Dictionary, dice: int = 1, exact: bool = true) -> bool:
+	var size: int = board["size"]
+	var jump_to: Dictionary = _jump_map(board)
 	var can_stand: Dictionary = {0: true}
 	var changed: bool = true
 	while changed:
@@ -423,10 +437,7 @@ func _independent_winnable(board: Dictionary, dice: int = 1) -> bool:
 			if not can_stand.has(square):
 				continue
 			for roll: int in range(dice, 6 * dice + 1):
-				var target: int = square + roll
-				if target > size:
-					continue
-				var landing: int = jump_to.get(target, target)
+				var landing: int = _landing(jump_to, size, square, roll, exact)
 				if not can_stand.has(landing):
 					can_stand[landing] = true
 					changed = true
@@ -435,108 +446,128 @@ func _independent_winnable(board: Dictionary, dice: int = 1) -> bool:
 
 func test_the_validator_agrees_with_the_independent_check_on_random_boards() -> void:
 	var prng: Prng = Prng.new(31415)
-	var both: int = 0
-	var neither: int = 0
-	var one_die_only: int = 0
-	var two_dice_only: int = 0
+	var patterns: Dictionary = {}
 	for i: int in 900:
 		# every other board is dense in snakes, every third has a wall of 5 to 7 snake heads,
 		# every fifth has a trap in front of the last square
 		var data: Dictionary = ClimbRig.random_board_data(prng, i % 2 == 0, i % 3 == 0, i % 5 == 0)
 		var verdict: Dictionary = ClimbBoard.validate(data)
-		var one: bool = _independent_winnable(data, 1)
-		var two: bool = _independent_winnable(data, 2)
-		assert_eq(CoreResult.is_ok(verdict), one and two, "board %d (size %d): validator and independent check disagree" % [i, data["size"]])
-		if one and two:
-			both += 1
-		elif one:
-			one_die_only += 1
-		elif two:
-			two_dice_only += 1
-		else:
-			neither += 1
+		var strict_one: bool = _independent_winnable(data, 1, true)
+		var lenient_one: bool = _independent_winnable(data, 1, false)
+		var lenient_two: bool = _independent_winnable(data, 2, false)
+		assert_eq(CoreResult.is_ok(verdict), strict_one and lenient_one and lenient_two, "board %d (size %d): validator and independent check disagree" % [i, data["size"]])
+		# the relationships between the three combinations (why the first one decides in practice)
+		assert_eq(strict_one, lenient_one, "board %d: one die wins with exact finish exactly when it wins without it" % i)
+		if strict_one:
+			assert_true(lenient_two, "board %d: if one die can win, two dice can too" % i)
+		var pattern: String = "%s%s%s" % ["T" if strict_one else "F", "T" if lenient_one else "F", "T" if lenient_two else "F"]
+		patterns[pattern] = int(patterns.get(pattern, 0)) + 1
 		if not CoreResult.is_ok(verdict):
 			assert_eq(CoreResult.error_code(verdict), ClimbErrors.INVALID_BOARD)
 			var message: String = str(verdict["error"]["message"])
 			assert_string_contains(message, "can never be reached")
-			# one die is checked first, so the message names two dice only if one die was fine
-			assert_string_contains(message, "one die" if not one else "two dice")
-	gut.p("winnability: %d boards winnable either way, %d only with one die, %d only with two dice, %d with neither; validator and independent check agreed on all" % [both, one_die_only, two_dice_only, neither])
-	assert_gt(both, 100)
-	assert_gte(one_die_only, 15, "boards that one die can finish but two dice cannot were compared")
-	assert_gt(two_dice_only, 20, "boards that two dice can finish but one die cannot were compared")
-	assert_gte(neither, 5, "boards neither dice count can finish were compared")
+			# the message names the first combination that fails
+			assert_string_contains(message, "one die with exact finish" if not strict_one else ("one die" if not lenient_one else "two dice"))
+	gut.p("winnability: patterns (one die exact / one die / two dice) %s; validator and independent check agreed on all 900 boards" % str(patterns))
+	assert_gt(int(patterns.get("TTT", 0)), 100, "plenty of boards winnable under every combination")
+	assert_gte(int(patterns.get("FFT", 0)), 10, "boards only two dice can finish (one die is blocked) were compared")
+	assert_gte(int(patterns.get("FFF", 0)), 5, "boards nobody can finish were compared")
+	assert_eq(patterns.keys().size(), 3, "no other combination pattern can occur: %s" % str(patterns))
 
 
-# --- one die versus two dice ----------------------------------------------------------------------------
+# --- the settings combinations --------------------------------------------------------------------------
 
-## Size 20: heads on 8..18 (11 in a row), a ladder from 3 straight to square 19, the square right
-## before the last. One die lands on 19 via the ladder and finishes with an exact 1. Two dice can
-## also land on 19, but from there every roll is at least 2, which overshoots 20 (and an
-## overshooting roll does not move), so nobody can finish.
-func _one_die_only_board() -> Dictionary:
-	return _data(_heads(8, 11), [_jump(3, 19)])
-
-
-func test_a_board_one_die_can_finish_but_two_dice_cannot_is_refused() -> void:
-	var data: Dictionary = _one_die_only_board()
-	assert_true(_independent_winnable(data, 1), "one die: ladder to 19, then roll a 1")
-	assert_false(_independent_winnable(data, 2), "two dice cannot roll a 1")
-	assert_eq(_error(data), ClimbErrors.INVALID_BOARD)
-	var message: String = _message(data)
-	assert_string_contains(message, "can never be reached with two dice")
-	assert_string_contains(message, "square 19", "it says two dice get as far as 19")
-	assert_string_contains(message, "single square", "and explains why")
+func test_every_allowed_settings_combination_is_checked() -> void:
+	assert_eq(ClimbSettings.allowed_combinations(), [
+		{"dice_count": 1, "exact_finish": true},
+		{"dice_count": 1, "exact_finish": false},
+		{"dice_count": 2, "exact_finish": false},
+	] as Array[Dictionary])
+	for combo: Dictionary in ClimbSettings.allowed_combinations():
+		assert_true(CoreResult.is_ok(ClimbSettings.normalize(combo)))
+	assert_false(CoreResult.is_ok(ClimbSettings.normalize({"dice_count": 2, "exact_finish": true})), "the refused one is not in the list")
 
 
-func test_the_same_board_becomes_valid_once_a_ladder_reaches_the_last_square_itself() -> void:
-	var r: Dictionary = ClimbBoard.validate(_data(_heads(8, 11), [_jump(3, 19), _jump(4, 20)]))
-	assert_true(CoreResult.is_ok(r), str(r))
+func test_the_search_models_exactly_what_the_rules_do_for_every_position_and_roll() -> void:
+	# the checks above are only as good as the model of one move: compare it with the real rules
+	var rules: ClimbAndSlitherRules = ClimbAndSlitherRules.new()
+	var board: Dictionary = ClimbBoard.validate(_data([_jump(17, 4), _jump(12, 6)], [_jump(3, 9), _jump(14, 19)]))["board"]
+	var jump_to: Dictionary = _jump_map(board)
+	var size: int = board["size"]
+	var compared: int = 0
+	for combo: Dictionary in ClimbSettings.allowed_combinations():
+		var dice: int = combo["dice_count"]
+		var settings: Dictionary = {"exact_finish": combo["exact_finish"], "dice_count": dice}
+		var rolls: Array = []
+		if dice == 1:
+			for die: int in range(1, 7):
+				rolls.append([die])
+		else:
+			for a: int in range(1, 7):
+				for b: int in range(1, 7):
+					rolls.append([a, b])
+		for square: int in range(0, size):
+			for dice_values: Array in rolls:
+				var total: int = 0
+				for die: int in dice_values:
+					total += die
+				var state: Dictionary = ClimbRig.game([dice_values], ["p1", "p2"], settings, {"p1": square}, board)
+				var result: Dictionary = rules.apply(state, "p1", {"type": "roll"})
+				assert_true(CoreResult.is_ok(result), str(result))
+				var expected: int = _landing(jump_to, size, square, total, combo["exact_finish"])
+				assert_eq(result["state"]["positions"]["p1"], expected, "%s: from %d rolling %s" % [str(combo), square, str(dice_values)])
+				compared += 1
+	assert_gt(compared, 900)
 
 
-func test_the_same_board_becomes_valid_with_a_second_free_square_in_the_last_twelve() -> void:
-	# a free square 2 to 12 before the last lets two dice finish exactly
-	var heads: Array = _heads(9, 10)  # 9..18, so 8 is free
-	var data: Dictionary = _data(heads, [_jump(3, 19), _jump(5, 8)])
+func test_a_lone_free_square_before_the_last_is_fine_because_two_dice_overshoot_and_win() -> void:
+	# size 20: heads on 8..18, a ladder from 3 to 19. One die lands on 19 and rolls a 1. Two
+	# dice cannot roll a 1, but without exact finish an overshoot lands on the last square.
+	var data: Dictionary = _data(_heads(8, 11), [_jump(3, 19)])
 	assert_true(CoreResult.is_ok(ClimbBoard.validate(data)), str(ClimbBoard.validate(data)))
+	assert_true(_independent_winnable(data, 1, true))
+	assert_true(_independent_winnable(data, 1, false))
+	assert_true(_independent_winnable(data, 2, false))
+	assert_false(_independent_winnable(data, 2, true), "two dice with exact finish would be stuck, which is why settings refuse that combination")
+	var board: Dictionary = ClimbBoard.validate(data)["board"]
+	assert_false(ClimbBoard.reachable_squares(board, 2, true).has(20))
+	assert_true(ClimbBoard.reachable_squares(board, 2, false).has(20))
 
 
-func test_a_wall_one_die_cannot_cross_is_refused_naming_one_die_even_though_two_dice_can_cross_it() -> void:
-	var data: Dictionary = _data(_heads(8, 6), [], 30, 6)
-	assert_false(_independent_winnable(data, 1))
-	assert_true(_independent_winnable(data, 2), "two dice step over six heads (a roll of 7 or more)")
-	assert_string_contains(_message(data), "one die")
-	assert_false(_message(data).contains("two dice"))
+func test_a_wall_refused_names_the_first_combination_that_fails() -> void:
+	var wall: Dictionary = _data(_heads(8, 6), [], 30, 6)
+	assert_eq(_error(wall), ClimbErrors.INVALID_BOARD)
+	assert_string_contains(_message(wall), "one die with exact finish")
+	assert_false(_message(wall).contains("two dice"))
 
 
-func test_a_board_neither_dice_count_can_finish_is_reported_for_one_die_first() -> void:
+func test_a_wall_only_two_dice_can_cross_is_still_refused_because_one_die_cannot() -> void:
+	var wall: Dictionary = _data(_heads(8, 6), [], 30, 6)
+	assert_false(_independent_winnable(wall, 1, true))
+	assert_false(_independent_winnable(wall, 1, false))
+	assert_true(_independent_winnable(wall, 2, false), "two dice step over six heads")
+	assert_eq(_error(wall), ClimbErrors.INVALID_BOARD)
+
+
+func test_a_board_nobody_can_finish_is_reported_for_the_first_combination() -> void:
 	var data: Dictionary = _data(_heads(2, 18), [])
-	assert_false(_independent_winnable(data, 1))
-	assert_false(_independent_winnable(data, 2))
-	assert_string_contains(_message(data), "one die")
+	assert_false(_independent_winnable(data, 1, true))
+	assert_false(_independent_winnable(data, 2, false))
+	assert_string_contains(_message(data), "one die with exact finish")
 
 
-func test_reachable_squares_depends_on_the_dice() -> void:
-	var board: Dictionary = ClimbBoard.validate(_data(_heads(8, 6), [], 30, 6))
-	assert_false(CoreResult.is_ok(board), "that wall board is refused, so build the data directly instead")
-	var small: Dictionary = {"name": "T", "size": 20, "columns": 5, "snakes": [], "ladders": []}
-	var valid: Dictionary = ClimbBoard.validate(small)["board"]
+func test_reachable_squares_depends_on_the_dice_and_the_overshoot_rule() -> void:
+	var valid: Dictionary = ClimbBoard.validate({"name": "T", "size": 20, "columns": 5, "snakes": [], "ladders": []})["board"]
 	assert_true(ClimbBoard.reachable_squares(valid, 1).has(1))
 	assert_false(ClimbBoard.reachable_squares(valid, 2).has(1), "two dice can never stand on square 1")
 	assert_true(ClimbBoard.reachable_squares(valid, 2).has(2))
-	assert_true(ClimbBoard.reachable_squares(valid, 1).has(20))
-	assert_true(ClimbBoard.reachable_squares(valid, 2).has(20))
+	for exact: bool in [true, false]:
+		assert_true(ClimbBoard.reachable_squares(valid, 1, exact).has(20))
+		assert_true(ClimbBoard.reachable_squares(valid, 2, exact).has(20))
 
 
-func test_the_classic_board_is_winnable_with_either_number_of_dice() -> void:
+func test_the_classic_board_is_winnable_under_every_allowed_combination() -> void:
 	var board: Dictionary = ClimbBoard.load_file()["board"]
-	assert_true(_independent_winnable(board, 1))
-	assert_true(_independent_winnable(board, 2))
-	assert_true(ClimbBoard.reachable_squares(board, 1).has(100))
-	assert_true(ClimbBoard.reachable_squares(board, 2).has(100))
-
-
-func test_a_game_cannot_start_on_a_board_two_dice_cannot_finish() -> void:
-	var rules: ClimbAndSlitherRules = ClimbAndSlitherRules.new()
-	var result: Dictionary = rules.new_game(["p1", "p2"], _one_die_only_board(), {}, 1)
-	assert_eq(CoreResult.error_code(result), ClimbErrors.INVALID_BOARD, "even a one-die game: a board must work for every allowed dice count")
+	for combo: Dictionary in ClimbSettings.allowed_combinations():
+		assert_true(_independent_winnable(board, combo["dice_count"], combo["exact_finish"]), str(combo))
+		assert_true(ClimbBoard.reachable_squares(board, combo["dice_count"], combo["exact_finish"]).has(100), str(combo))

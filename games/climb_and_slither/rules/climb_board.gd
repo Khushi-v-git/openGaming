@@ -17,14 +17,16 @@ extends RefCounted
 ##   - a jump's end is never another jump's start: no chains, hence no loops, and a
 ##     landing triggers at most one jump;
 ##   - shared end squares are allowed;
-##   - the last square can be reached for every allowed number of dice: a search from square 0
-##     over rolls 1 to 6 (one die) and over rolls 2 to 12 (two dice), plus the board's jumps,
-##     must get there. Otherwise nobody could ever win (for example six snake heads in a row,
-##     which one die cannot cross, or a trap near the start). Both searches use the strictest
-##     house rule (an overshooting roll does not move), so a board that passes is winnable
-##     under every combination of house rules, including ones the settings do not allow today.
-##     (That is stricter than necessary for two dice with exact finish off, where an overshoot
-##     lands on the last square; it keeps the guarantee if more combinations are allowed.)
+##   - the last square can be reached under every allowed settings combination (see
+##     ClimbSettings.allowed_combinations): one die with exact finish, one die without it, and two
+##     dice without it. For each, a search from square 0 over that combination's rolls (1 to 6 for
+##     one die, 2 to 12 for two) plus the board's jumps must get there, modelled exactly: with
+##     exact finish an overshooting roll does not move, without it an overshoot lands on the last
+##     square. Otherwise nobody could ever win (for example six snake heads in a row, which one
+##     die cannot cross, or a trap near the start).
+##     In practice the first combination decides: if one die with exact finish can win, the other
+##     two can too (tests check this on hundreds of random boards), but each is still checked
+##     separately so the guarantee does not depend on that argument.
 
 const MIN_SIZE: int = 10
 const MAX_SIZE: int = 400
@@ -85,13 +87,13 @@ static func validate(data: Dictionary) -> Dictionary:
 			if starts.has(jump["to"]):
 				return _bad("The %s from %d ends on square %d, which starts a %s: jumps may not chain." % [kind, jump["from"], jump["to"], starts[jump["to"]]])
 
-	for dice: int in range(1, ClimbSettings.MAX_DICE + 1):
-		var reachable: Dictionary = _reachable(size, jump_ends, dice)
+	for combo: Dictionary in ClimbSettings.allowed_combinations():
+		var reachable: Dictionary = _reachable(size, jump_ends, combo["dice_count"], combo["exact_finish"])
 		if not reachable.has(size):
 			var furthest: int = 0
 			for square: int in reachable:
 				furthest = maxi(furthest, square)
-			return _bad("The last square (%d) can never be reached with %s: whatever is rolled, nobody gets further than square %d. %s" % [size, _dice_name(dice), furthest, _hint(dice)])
+			return _bad("The last square (%d) can never be reached with %s: whatever is rolled, nobody gets further than square %d. %s" % [size, _combo_name(combo), furthest, _hint(combo)])
 
 	var snakes: Array = clean[KIND_SNAKE]
 	var ladders: Array = clean[KIND_LADDER]
@@ -107,15 +109,16 @@ static func validate(data: Dictionary) -> Dictionary:
 
 
 ## Every square a player can ever stand on with `dice_count` dice (rolls 1 to 6 for one die,
-## 2 to 12 for two), found by searching from square 0 with the board's jumps (an overshooting
-## roll does not move). The last square is in the result exactly when the board is winnable
-## with that many dice. Takes a validated board. Returns {square: true}.
-static func reachable_squares(board: Dictionary, dice_count: int = 1) -> Dictionary:
+## 2 to 12 for two), found by searching from square 0 with the board's jumps. With
+## `exact_finish` an overshooting roll does not move; without it an overshoot lands on the last
+## square (the rules' two behaviours). The last square is in the result exactly when the board is
+## winnable under that combination. Takes a validated board. Returns {square: true}.
+static func reachable_squares(board: Dictionary, dice_count: int = 1, exact_finish: bool = true) -> Dictionary:
 	var jump_ends: Dictionary = {}
 	for kind_list: Array in [board["snakes"], board["ladders"]]:
 		for jump: Dictionary in kind_list:
 			jump_ends[jump["from"]] = jump["to"]
-	return _reachable(board["size"], jump_ends, dice_count)
+	return _reachable(board["size"], jump_ends, dice_count, exact_finish)
 
 
 ## The jump that starts on `square`, as {kind, from, to}, or {} if there is none.
@@ -129,17 +132,20 @@ static func jump_at(board: Dictionary, square: int) -> Dictionary:
 	return {}
 
 
-static func _dice_name(dice: int) -> String:
-	return "one die" if dice == 1 else "two dice"
+static func _combo_name(combo: Dictionary) -> String:
+	var dice: String = "one die" if combo["dice_count"] == 1 else "two dice"
+	return dice + (" with exact finish" if combo["exact_finish"] else "")
 
 
-static func _hint(dice: int) -> String:
-	if dice == 1:
+static func _hint(combo: Dictionary) -> String:
+	if combo["dice_count"] == 1:
 		return "Look for six or more snake heads in a row, or a trap near the start."
-	return "With two dice nobody can move a single square, so a lone free square right before the last one is not enough."
+	return "Look for twelve or more snake heads in a row, or a trap near the start."
 
 
-static func _reachable(size: int, jump_ends: Dictionary, dice: int = 1) -> Dictionary:
+## Squares reachable from 0 with rolls dice..6*dice. Overshooting (target past the last square):
+## with exact_finish it does not move; without it the player lands on the last square.
+static func _reachable(size: int, jump_ends: Dictionary, dice: int = 1, exact_finish: bool = true) -> Dictionary:
 	var seen: Dictionary = {0: true}
 	var queue: Array[int] = [0]
 	var head: int = 0
@@ -150,9 +156,13 @@ static func _reachable(size: int, jump_ends: Dictionary, dice: int = 1) -> Dicti
 			continue
 		for roll: int in range(dice, ClimbSettings.DIE_SIDES * dice + 1):
 			var target: int = at + roll
+			var landing: int
 			if target > size:
-				break  # overshooting does not move (the strictest house rule)
-			var landing: int = jump_ends.get(target, target)
+				if exact_finish:
+					break  # does not move
+				landing = size
+			else:
+				landing = jump_ends.get(target, target)
 			if not seen.has(landing):
 				seen[landing] = true
 				queue.append(landing)

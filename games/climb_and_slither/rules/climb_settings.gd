@@ -50,6 +50,19 @@ static func normalize(input: Dictionary) -> Dictionary:
 	return CoreResult.success({"settings": settings})
 
 
+## Every combination of the rules that change how a roll moves a player, as {dice_count,
+## exact_finish}, listing only the ones normalize() accepts: one die with exact finish, one die
+## without it, two dice without it. The board validator checks a board is winnable under each,
+## so it follows whatever the settings allow.
+static func allowed_combinations() -> Array[Dictionary]:
+	var combos: Array[Dictionary] = []
+	for exact: bool in [true, false]:
+		for dice: int in range(1, MAX_DICE + 1):
+			if CoreResult.is_ok(normalize({"exact_finish": exact, "dice_count": dice})):
+				combos.append({"dice_count": dice, "exact_finish": exact})
+	return combos
+
+
 ## What a settings screen should offer given the current choices, so the UI greys things out
 ## without knowing any rule (rule 12). "Exact finish" and "two dice" exclude each other: while one
 ## is chosen the other is disabled, with a short tooltip. An option that is already chosen stays

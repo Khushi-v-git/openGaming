@@ -76,8 +76,8 @@ static func event_types(events: Array) -> Array[String]:
 ## Raw random board data that follows the structural rules (unique starts, none on square 1 or
 ## the last square, right direction, no jump ending on another's start) but is NOT checked for
 ## winnability, so it can be unwinnable. `dense` makes many snakes and small boards, which
-## produces unwinnable ones sometimes; `wall` adds a run of 5 to 7 consecutive snake heads (all
-## sliding to square 1), which is uncrossable from 6 up. Used to compare the validator against an
+## produces unwinnable ones sometimes; `wall` adds a run of 5 to 13 consecutive snake heads (all
+## sliding to square 1): uncrossable for one die from 6 up, and for two dice from 12 up. Used to compare the validator against an
 ## independent check. `end_trap` fills the squares just before the last one with snake heads except
 ## the square right before it, which a ladder leads to: one die can finish from there (rolling a
 ## 1) but two dice, whose smallest roll is 2, cannot.
@@ -88,7 +88,7 @@ static func random_board_data(prng: Prng, dense: bool = false, wall: bool = fals
 	var starts: Dictionary = {}
 	var jumps: Array[Dictionary] = []
 	if wall:
-		var length: int = prng.range_int(5, 7)
+		var length: int = mini(prng.range_int(5, 13), size - 3)
 		var first: int = prng.range_int(2, size - length)
 		for square: int in range(first, first + length):
 			if not starts.has(square):
