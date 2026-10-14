@@ -2,7 +2,7 @@
 
 Free, open-source desktop board and card games for playing with friends.
 One Godot application containing many games. One player hosts, the others
-join. Starting game: Snakes and Ladders.
+join. Starting game: Climb and Slither (a Snakes and Ladders game).
 
 ## Tech stack and environment
 - Godot 4.x (standard build), GDScript, Compatibility renderer, 2D only.
@@ -22,9 +22,12 @@ core/                      shared code, used by every game
   session/                 handshake, reconnect, save/load
   ui/                      shared UI kit (themes, buttons, panels)
   registry/                game registry and manifest loader
+  util/                    small shared helpers (Prng)
   assets/                  shared art, fonts, icons, dice, paper textures
 games/
-    climb_and_slither/
+  climb_and_slither/       one folder per game, same layout in each
+    manifest.json          registry entry (see below)
+    data/                  data files (boards, tables)
     rules/                 pure logic, no nodes
     ui/                    scenes and scripts
     assets/                game-specific art
@@ -40,7 +43,9 @@ docs/
 - A game depends only on core's public interfaces and never on another game.
 - Games register through a manifest (id, display name, icon, min/max players,
   rules class, UI scene). The home screen is built from the registry. Adding a
-  game must not require editing core/.
+  game must not require editing core/. `ui_scene` is optional in the manifest
+  while a game is in development; the home screen lists only games that have
+  one.
 - Shared art lives in core/assets/. Game-specific art stays in the game folder.
 
 ## Architecture rules (do not violate)
@@ -61,8 +66,12 @@ docs/
    with; the host cannot "continue without waiting" below it. Result is a
    plain dict `{ok: bool, state: Dictionary, error: {code, message}}` (`state`
    when ok, `error` when not; on error the input state is unchanged). All
-   randomness comes from a seeded RandomNumberGenerator passed in, so results
-   are reproducible. Rules must be unit-testable with no window and no network.
+   randomness comes from the shared `Prng` (core/util), a seeded generator
+   that gives the same numbers on every Godot version. Its seed and state live
+   in the game state as decimal strings (64-bit values do not survive JSON as
+   numbers) and are host-only: they never appear in `view_for` output, and the
+   host broadcasts views, never raw state. Results are reproducible. Rules
+   must be unit-testable with no window and no network.
 
 3. **Transport is an interface.** All networking goes through one small
    interface: `send(peer_id, message)`, `broadcast(message)`,
@@ -178,10 +187,19 @@ docs/
 
 ## Climb and Slither (first game)
 - Board data (snake and ladder start/end squares) lives in a data file, not in
-  rules code. Validate it: no snake or ladder starts on square 1 or 100, no
-  square is both, and chains must terminate.
+  rules code. Validate it: every start square is unique and is not square 1 or
+  100 (so no square is both a snake and a ladder start); a jump's end is never
+  another jump's start (no chains, no loops); snakes go down and ladders go up.
+  Shared end squares are allowed. A landing triggers at most one jump.
 - House rules are settings, not hardcoded: exact roll needed to finish on 100,
-  extra turn on a 6.
+  extra turn on a 6, number of dice. Defaults: exact finish off, extra turn on
+  a 6 off, one die. With two dice, "a 6" means either die shows a 6. There is
+  no cap on consecutive extra turns. Exact finish needs one die: with two dice
+  the square before the last could never be finished (minimum total is 2), so
+  the combination is refused.
+- The rules draw one range_int(1, 6) per die, in order. Changing the draw
+  order or the Prng algorithm breaks saves and replays and requires bumping
+  state_version.
 - Snakes and ladders are separate sprites placed from data. Square numbers are
   drawn as labels by Godot, never baked into the board image.
 - 2-4 players. Player colors: red, blue, green, yellow.
