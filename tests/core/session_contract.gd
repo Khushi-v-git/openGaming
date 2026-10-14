@@ -1,48 +1,9 @@
-extends GutTest
+extends NetTestCase
 ## Shared handshake/session tests. Not collected itself; each transport has a thin
 ## test_*.gd that extends this file and overrides make_env().
 
-const APP: String = "1.0.0"
-const GAME: String = "test_game"
-
-var env: TransportEnv
-var clock: FakeClock
-var _pollers: Array = []
-var _transports: Array[Transport] = []
-
-
-func make_env() -> TransportEnv:
-	return null
-
-
-func before_each() -> void:
-	env = make_env()
-	clock = FakeClock.new()
-	_pollers.clear()
-	_transports.clear()
-	MessageLog.enabled = false
-	MessageLog.sink = Callable()
-
-
-func after_each() -> void:
-	for transport: Transport in _transports:
-		transport.leave()
-	_transports.clear()
-	_pollers.clear()
-	env.cleanup()
-	MessageLog.enabled = OS.is_debug_build()
-	MessageLog.sink = Callable()
-
 
 # --- helpers ---------------------------------------------------------------------
-
-func pump(condition: Callable, max_frames: int = NetWait.DEFAULT_MAX_FRAMES) -> bool:
-	return await NetWait.until(self, _pollers, condition, max_frames)
-
-
-func frames(count: int) -> void:
-	await NetWait.frames(self, _pollers, count)
-
 
 func start_host(options: Dictionary = {}) -> HostRig:
 	var rig: HostRig = HostRig.new()
@@ -52,8 +13,7 @@ func start_host(options: Dictionary = {}) -> HostRig:
 	var info: Dictionary = rig.session.start(env.host_config())
 	assert_true(CoreResult.is_ok(info), "host start failed: %s" % str(info))
 	rig.address = str(info.get("address", ""))
-	_pollers.append(rig.session)
-	_transports.append(rig.session.transport)
+	track(rig.session, rig.session.transport)
 	return rig
 
 
@@ -62,8 +22,7 @@ func new_client(host: HostRig, player_name: String, app_version: String = APP, g
 	rig.session = ClientSession.new(env.make_transport(), app_version, game_id, options)
 	rig.session.clock = clock.as_callable()
 	rig.recorder = ClientRecorder.new(rig.session)
-	_pollers.append(rig.session)
-	_transports.append(rig.session.transport)
+	track(rig.session, rig.session.transport)
 	rig.session.join(host.address, player_name, env.join_config())
 	return rig
 
@@ -79,8 +38,7 @@ func join_and_wait(host: HostRig, player_name: String, app_version: String = APP
 ## A bare transport that connects but speaks the protocol by hand.
 func raw_connect(host: HostRig) -> TransportRig:
 	var rig: TransportRig = TransportRig.new(env.make_transport())
-	_pollers.append(rig.transport)
-	_transports.append(rig.transport)
+	track(rig.transport, rig.transport)
 	rig.transport.join_session(host.address, env.join_config())
 	var ok: bool = await pump(func() -> bool: return rig.recorder.join_ok_count > 0)
 	assert_true(ok, "raw client failed to join transport")
@@ -216,8 +174,7 @@ func test_unknown_rejoin_identity_is_rejected() -> void:
 	var client: ClientRig = ClientRig.new()
 	client.session = ClientSession.new(env.make_transport(), APP, GAME)
 	client.recorder = ClientRecorder.new(client.session)
-	_pollers.append(client.session)
-	_transports.append(client.session.transport)
+	track(client.session, client.session.transport)
 	client.session.join(host.address, "Zed", env.join_config(), {"player_id": "p99", "rejoin_token": "nope"})
 	var ok: bool = await pump(func() -> bool: return client.recorder.has_outcome(), 3000)
 	assert_true(ok)

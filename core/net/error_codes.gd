@@ -31,3 +31,11 @@ const NOT_ENOUGH_PLAYERS: String = "NOT_ENOUGH_PLAYERS"
 const WRONG_PHASE: String = "WRONG_PHASE"
 const UNKNOWN_ACTION: String = "UNKNOWN_ACTION"
 const UNKNOWN_PLAYER: String = "UNKNOWN_PLAYER"
+const ALREADY_JOINED: String = "ALREADY_JOINED"
+const HOST_CANNOT_LEAVE: String = "HOST_CANNOT_LEAVE"
+const PLAYER_LEFT: String = "PLAYER_LEFT"
+const BAD_ACTION: String = "BAD_ACTION"
+
+# Client-side only (never sent on the wire)
+const CONNECT_FAILED: String = "CONNECT_FAILED"
+const HOST_LOST: String = "HOST_LOST"

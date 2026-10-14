@@ -16,6 +16,7 @@ const T_PONG: String = "pong"
 # Lobby and session
 const T_LOBBY_ACTION: String = "lobby_action"
 const T_LOBBY_STATE: String = "lobby_state"
+const T_LOBBY_ERROR: String = "lobby_error"
 const T_SESSION_END: String = "session_end"
 # Game traffic. Payloads are opaque to core.
 const T_GAME_ACTION: String = "game_action"
