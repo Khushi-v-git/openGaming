@@ -19,8 +19,14 @@ var local_player_id: String
 ## resend the full current game state to a player who rejoins mid-game (rules 7, 9).
 var game_view_provider: Callable = Callable()
 
+var _app_version: String
+var _game_id: String
+var _started: bool = false
+
 
 func _init(transport: Transport, app_version: String, game_id: String, host_name: String, min_players: int, max_players: int, session_options: Dictionary = {}) -> void:
+	_app_version = app_version
+	_game_id = game_id
 	session = HostSession.new(transport, app_version, game_id, session_options)
 	local_player_id = session.registry.create(host_name)["player_id"]
 	state = LobbyLogic.create(game_id, min_players, max_players, local_player_id, host_name)
@@ -34,7 +40,33 @@ func _init(transport: Transport, app_version: String, game_id: String, host_name
 
 ## Starts listening/registering. Returns the transport's session info (address etc.).
 func start(transport_config: Dictionary) -> Dictionary:
+	_started = true
 	return session.start(transport_config)
+
+
+## The whole session as plain data, for saving (see SessionSnapshot: it is PRIVATE,
+## it contains rejoin tokens). `game_state` is the game's own serialized state.
+func snapshot(game_state: Dictionary = {}) -> Dictionary:
+	return SessionSnapshot.capture(_app_version, _game_id, state, session.registry, game_state)
+
+
+## Resumes a saved session. Call on a fresh LobbyHost, before start(). `as_player_id`
+## is which saved player is hosting now (default: the saved host); everyone else is
+## offline until they rejoin with the identity in the save. Returns {ok, game_state}.
+func restore(saved: Dictionary, as_player_id: String = "") -> Dictionary:
+	if _started:
+		return CoreResult.failure(ErrorCodes.WRONG_PHASE, "A save can only be loaded before hosting starts.")
+	var checked: Dictionary = SessionSnapshot.validate(saved, _app_version, _game_id)
+	if not CoreResult.is_ok(checked):
+		return checked
+	var host_id: String = as_player_id if not as_player_id.is_empty() else str(saved["lobby"]["host_player_id"])
+	var resumed: Dictionary = LobbyLogic.resume(saved["lobby"], host_id)
+	if not CoreResult.is_ok(resumed):
+		return resumed
+	session.registry = PlayerRegistry.from_dict(saved["players"])
+	state = resumed["state"]
+	local_player_id = host_id
+	return CoreResult.success({"game_state": saved["game_state"].duplicate(true)})
 
 
 func poll() -> void:

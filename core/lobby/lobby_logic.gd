@@ -64,6 +64,24 @@ static func apply(state: Dictionary, player_id: String, action: Dictionary) -> D
 	return CoreResult.success({"state": next})
 
 
+## Used when a saved lobby is loaded: `host_player_id` (any saved player who has not
+## left) becomes the host and is the only one online; everybody else is offline until
+## they rejoin with their token. Not an action: it never comes from the wire.
+static func resume(state: Dictionary, host_player_id: String) -> Dictionary:
+	var index: int = find_slot(state, host_player_id)
+	if index < 0:
+		return CoreResult.failure(ErrorCodes.UNKNOWN_PLAYER, "That player is not in the saved game.")
+	if state["slots"][index]["left"]:
+		return CoreResult.failure(ErrorCodes.PLAYER_LEFT, "That player left the saved game.")
+	var next: Dictionary = state.duplicate(true)
+	for slot: Dictionary in next["slots"]:
+		slot["connected"] = slot["player_id"] == host_player_id
+	next["slots"][index]["ready"] = true
+	next["host_player_id"] = host_player_id
+	next["revision"] = int(next["revision"]) + 1
+	return CoreResult.success({"state": next})
+
+
 ## Pre-check for a join, used by the host as the admission policy.
 static func can_join(state: Dictionary, player_name: String) -> Dictionary:
 	if state["phase"] != PHASE_OPEN:

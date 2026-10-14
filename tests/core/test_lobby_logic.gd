@@ -260,3 +260,49 @@ func test_view_for_adds_you_and_no_secrets() -> void:
 	var view: Dictionary = LobbyLogic.view_for(_ready_lobby(), "p2")
 	assert_eq(view["you"], "p2")
 	assert_false(JSON.stringify(view).contains("token"))
+
+
+# --- resume (loading a save) -----------------------------------------------------
+
+func _in_game_lobby() -> Dictionary:
+	var s: Dictionary = _join(_ready_lobby(), "p3", "Cy")
+	s = _apply_ok(s, "p3", {"type": "set_ready", "ready": true})
+	return _apply_ok(s, "p1", {"type": "start"})
+
+
+func test_resume_keeps_host_and_puts_everyone_else_offline() -> void:
+	var s: Dictionary = _in_game_lobby()
+	var r: Dictionary = LobbyLogic.resume(s, "p1")
+	assert_true(CoreResult.is_ok(r))
+	var resumed: Dictionary = r["state"]
+	assert_eq(resumed["host_player_id"], "p1")
+	assert_true(resumed["slots"][0]["connected"])
+	assert_false(resumed["slots"][1]["connected"])
+	assert_false(resumed["slots"][2]["connected"])
+	assert_eq(resumed["phase"], LobbyLogic.PHASE_IN_GAME)
+	assert_eq(resumed["revision"], s["revision"] + 1)
+
+
+func test_resume_as_another_player_hands_them_the_host_role() -> void:
+	var resumed: Dictionary = LobbyLogic.resume(_in_game_lobby(), "p2")["state"]
+	assert_eq(resumed["host_player_id"], "p2")
+	assert_true(resumed["slots"][1]["connected"])
+	assert_false(resumed["slots"][0]["connected"], "the old host is offline until they rejoin")
+	assert_true(resumed["slots"][1]["ready"])
+	# the new host has host powers, the old one does not
+	assert_eq(_code(resumed, "p1", {"type": "kick", "player_id": "p3"}), ErrorCodes.NOT_HOST)
+	assert_true(CoreResult.is_ok(LobbyLogic.apply(resumed, "p2", {"type": "kick", "player_id": "p3"})))
+
+
+func test_resume_rejects_unknown_or_departed_players_and_leaves_state_alone() -> void:
+	var s: Dictionary = _apply_ok(_in_game_lobby(), "p3", {"type": "leave"})
+	var snapshot: Dictionary = s.duplicate(true)
+	assert_eq(CoreResult.error_code(LobbyLogic.resume(s, "p9")), ErrorCodes.UNKNOWN_PLAYER)
+	assert_eq(CoreResult.error_code(LobbyLogic.resume(s, "p3")), ErrorCodes.PLAYER_LEFT)
+	assert_eq(s, snapshot)
+
+
+func test_resumed_players_can_reconnect() -> void:
+	var resumed: Dictionary = LobbyLogic.resume(_in_game_lobby(), "p1")["state"]
+	var back: Dictionary = _apply_ok(resumed, "p2", {"type": "reconnected"})
+	assert_true(back["slots"][1]["connected"])

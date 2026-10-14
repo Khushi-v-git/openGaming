@@ -549,3 +549,157 @@ func test_rejoin_still_checks_the_app_version() -> void:
 	wrong.client.join(host.address, "Asha", env.join_config(), identity)
 	assert_true(await pump(func() -> bool: return wrong.recorder.has_outcome(), 3000))
 	assert_eq(wrong.recorder.join_failures[0]["code"], ErrorCodes.APP_VERSION_MISMATCH)
+
+
+# --- save and resume -------------------------------------------------------------
+
+## A fresh host process loading a save. Returns the rig plus the restore result.
+func resume_lobby(saved: Dictionary, as_player_id: String = "", app_version: String = APP, game_id: String = GAME) -> Array:
+	var rig: LobbyHostRig = LobbyHostRig.new()
+	rig.lobby = LobbyHost.new(env.make_transport(), app_version, game_id, "placeholder", 2, 4)
+	rig.lobby.session.clock = clock.as_callable()
+	rig.recorder = LobbyHostRecorder.new(rig.lobby)
+	var restored: Dictionary = rig.lobby.restore(saved, as_player_id)
+	if CoreResult.is_ok(restored):
+		var info: Dictionary = rig.lobby.start(env.host_config())
+		assert_true(CoreResult.is_ok(info), "resumed host failed to start: %s" % str(info))
+		rig.address = str(info.get("address", ""))
+	track(rig.lobby, rig.lobby.session.transport)
+	return [rig, restored]
+
+
+## Plays a 3-player game up to the point of saving; returns {snapshot, a, b} where a and
+## b are the clients' identities before the "crash".
+func play_and_save(game_state: Dictionary) -> Dictionary:
+	var host: LobbyHostRig = start_lobby()
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	var b: LobbyClientRig = await join_player(host, "Bo")
+	await _start_game_with(host, [a, b])
+	# through text, exactly as a save file would travel
+	var text: String = SessionSnapshot.to_text(host.lobby.snapshot(game_state))
+	var saved: Dictionary = SessionSnapshot.from_text(text)["snapshot"]
+	var identities: Dictionary = {"a": a.client.identity(), "b": b.client.identity(), "host_id": host.lobby.local_player_id}
+	host.lobby.session.transport.leave()  # the host app is gone
+	await pump(func() -> bool: return a.recorder.left.size() >= 1 and b.recorder.left.size() >= 1)
+	return {"snapshot": saved, "ids": identities}
+
+
+func test_resume_as_same_host_players_rejoin_with_saved_identities() -> void:
+	var played: Dictionary = await play_and_save({"turn": 3})
+	var saved: Dictionary = played["snapshot"]
+	var ids: Dictionary = played["ids"]
+
+	var resumed: Array = resume_lobby(saved)
+	var host: LobbyHostRig = resumed[0]
+	assert_true(CoreResult.is_ok(resumed[1]))
+	assert_eq(resumed[1]["game_state"], {"turn": 3}, "the game gets its own state back")
+	assert_eq(host.state()["phase"], LobbyLogic.PHASE_IN_GAME)
+	assert_eq(host.lobby.local_player_id, ids["host_id"])
+	assert_eq(host.state()["slots"].size(), 3)
+	assert_true(host.state()["slots"][0]["connected"])
+	assert_false(host.state()["slots"][1]["connected"], "offline until they rejoin")
+	assert_false(host.state()["slots"][2]["connected"])
+	host.lobby.game_view_provider = func(player_id: String) -> Dictionary: return {"you": player_id, "turn": 3}
+
+	var a2: LobbyClientRig = await join_player(host, "Asha", ids["a"])
+	var b2: LobbyClientRig = await join_player(host, "Bo", ids["b"])
+	assert_eq(a2.recorder.joined, [ids["a"]["player_id"]] as Array[String], "same player ids as before")
+	assert_eq(b2.recorder.joined, [ids["b"]["player_id"]] as Array[String])
+	assert_true(await converge(host, [a2, b2]))
+	assert_true(host.state()["slots"][1]["connected"] and host.state()["slots"][2]["connected"])
+	assert_ne(a2.client.identity()["rejoin_token"], ids["a"]["rejoin_token"], "token rotated on the first rejoin")
+	assert_ne(b2.client.identity()["rejoin_token"], ids["b"]["rejoin_token"])
+	assert_true(await pump(func() -> bool: return not a2.recorder.game_messages.is_empty()))
+	assert_eq(a2.recorder.game_messages[0]["payload"]["view"], {"you": ids["a"]["player_id"], "turn": 3})
+
+
+func test_resume_as_a_different_player_makes_them_host() -> void:
+	var played: Dictionary = await play_and_save({"turn": 7})
+	var saved: Dictionary = played["snapshot"]
+	var ids: Dictionary = played["ids"]
+	var new_host_id: String = ids["b"]["player_id"]
+
+	var resumed: Array = resume_lobby(saved, new_host_id)
+	var host: LobbyHostRig = resumed[0]
+	assert_true(CoreResult.is_ok(resumed[1]))
+	assert_eq(host.lobby.local_player_id, new_host_id)
+	assert_eq(host.state()["host_player_id"], new_host_id)
+
+	# The previous host comes back as an ordinary player, using the identity in the save.
+	var old_host: LobbyClientRig = await join_player(host, "Hosty", SessionSnapshot.identity_of(saved, ids["host_id"]))
+	assert_eq(old_host.recorder.joined, [ids["host_id"]] as Array[String])
+	assert_true(await converge(host, [old_host]))
+	assert_false(old_host.client.is_host())
+	assert_eq(CoreResult.error_code(host.lobby.act({"type": "kick", "player_id": "nobody"})), ErrorCodes.UNKNOWN_PLAYER, "the new host has host powers")
+	old_host.client.start_game()
+	assert_true(await pump(func() -> bool: return not old_host.recorder.action_failures.is_empty()))
+	assert_eq(old_host.recorder.action_failures[0]["code"], ErrorCodes.NOT_HOST, "and the old host no longer does")
+
+
+func test_resumed_game_turns_away_strangers() -> void:
+	var played: Dictionary = await play_and_save({})
+	var host: LobbyHostRig = resume_lobby(played["snapshot"])[0]
+	var stranger: LobbyClientRig = await join_player(host, "Newbie")
+	assert_eq(stranger.recorder.join_failures[0]["code"], ErrorCodes.GAME_IN_PROGRESS)
+
+
+func test_a_leaked_save_stops_working_once_the_real_player_is_back() -> void:
+	var played: Dictionary = await play_and_save({})
+	var saved: Dictionary = played["snapshot"]
+	var host: LobbyHostRig = resume_lobby(saved)[0]
+	var real: LobbyClientRig = await join_player(host, "Asha", played["ids"]["a"])
+	assert_eq(real.recorder.joined.size(), 1)
+	real.client.session.send(Envelope.make(Protocol.T_GAME_ACTION, {"action": "move"}))
+	assert_true(await pump(func() -> bool: return not host.recorder.game_messages.is_empty()), "first message confirms the new token")
+	real.client.session.transport.leave()
+	await pump(func() -> bool: return not host.state()["slots"][1]["connected"])
+	var thief: LobbyClientRig = await join_player(host, "Asha", played["ids"]["a"])
+	assert_eq(thief.recorder.join_failures[0]["code"], ErrorCodes.BAD_TOKEN)
+
+
+func test_a_save_for_another_game_or_app_version_is_refused() -> void:
+	var played: Dictionary = await play_and_save({})
+	var other_version: Array = resume_lobby(played["snapshot"], "", "2.0.0")
+	assert_eq(CoreResult.error_code(other_version[1]), ErrorCodes.APP_VERSION_MISMATCH)
+	var other_game: Array = resume_lobby(played["snapshot"], "", APP, "other_game")
+	assert_eq(CoreResult.error_code(other_game[1]), ErrorCodes.WRONG_GAME)
+
+
+func test_resume_refuses_a_player_who_left_or_does_not_exist() -> void:
+	var host: LobbyHostRig = start_lobby()
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	var b: LobbyClientRig = await join_player(host, "Bo")
+	await _start_game_with(host, [a, b])
+	a.client.leave()
+	await pump(func() -> bool: return host.state()["slots"][1]["left"])
+	var saved: Dictionary = host.lobby.snapshot({})
+	assert_eq(CoreResult.error_code(resume_lobby(saved, a.client.player_id)[1]), ErrorCodes.PLAYER_LEFT)
+	assert_eq(CoreResult.error_code(resume_lobby(saved, "p99")[1]), ErrorCodes.UNKNOWN_PLAYER)
+
+
+func test_a_save_can_only_be_loaded_before_hosting_starts() -> void:
+	var host: LobbyHostRig = start_lobby()
+	var saved: Dictionary = host.lobby.snapshot({})
+	assert_eq(CoreResult.error_code(host.lobby.restore(saved)), ErrorCodes.WRONG_PHASE)
+
+
+func test_an_open_lobby_can_be_saved_and_resumed_too() -> void:
+	var host: LobbyHostRig = start_lobby()
+	var a: LobbyClientRig = await join_player(host, "Asha")
+	a.client.set_ready(true)
+	await converge(host, [a])
+	var saved: Dictionary = SessionSnapshot.from_text(SessionSnapshot.to_text(host.lobby.snapshot({})))["snapshot"]
+	var identity: Dictionary = a.client.identity()
+	host.lobby.session.transport.leave()
+	await pump(func() -> bool: return a.recorder.left.size() >= 1)
+
+	var resumed: LobbyHostRig = resume_lobby(saved)[0]
+	assert_eq(resumed.state()["phase"], LobbyLogic.PHASE_OPEN)
+	assert_eq(CoreResult.error_code(resumed.lobby.act({"type": "start"})), ErrorCodes.NOT_ALL_READY, "Asha is still offline")
+	var a2: LobbyClientRig = await join_player(resumed, "Asha", identity)
+	assert_eq(a2.recorder.joined.size(), 1)
+	assert_true(await converge(resumed, [a2]))
+	assert_true(resumed.state()["slots"][1]["connected"])
+	a2.client.set_ready(true)
+	assert_true(await pump(func() -> bool: return LobbyLogic.ready_to_start(resumed.state())))
+	assert_true(CoreResult.is_ok(resumed.lobby.act({"type": "start"})))
