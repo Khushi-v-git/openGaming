@@ -97,6 +97,11 @@ func pawn_rest_position(player_id: String) -> Vector2:
 	return layout.pawn_positions(_positions, _seat_order, cell, origin)[player_id]
 
 
+## The square a player's pawn is on right now (0 = the start strip).
+func square_of(player_id: String) -> int:
+	return int(_positions.get(player_id, 0))
+
+
 func pawn_node(player_id: String) -> Sprite2D:
 	return pawn_sprites.get(player_id, null)
 

@@ -6,5 +6,7 @@
   "min_players": 2,
   "max_players": 4,
   "min_active_players": 2,
-  "rules_class": "res://games/climb_and_slither/rules/climb_and_slither_rules.gd"
+  "rules_class": "res://games/climb_and_slither/rules/climb_and_slither_rules.gd",
+  "ui_scene": "res://games/climb_and_slither/ui/climb_game_screen.tscn",
+  "settings_scene": "res://games/climb_and_slither/ui/settings_panel.tscn"
 }

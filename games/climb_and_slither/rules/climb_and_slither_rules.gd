@@ -39,6 +39,12 @@ const _STATE_KEYS: Array[String] = [
 ]
 
 
+## The classic board from the data file.
+func default_setup() -> Dictionary:
+	var loaded: Dictionary = ClimbBoard.load_file()
+	return loaded["board"] if CoreResult.is_ok(loaded) else {}
+
+
 ## Starts a game. `player_ids` is the seat order (the first player moves first). `board` is
 ## board data (validated here, then embedded), `settings` any subset of the house rules.
 ## Returns {ok, state, events: []} or a failure (BAD_PLAYERS, INVALID_BOARD, INVALID_SETTINGS).

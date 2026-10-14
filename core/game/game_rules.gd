@@ -17,6 +17,12 @@ extends RefCounted
 const NOT_IMPLEMENTED: String = "NOT_IMPLEMENTED"
 
 
+## The `setup` data a new game normally starts with (for a board game, its standard board),
+## so a menu can start any game without knowing what it needs.
+func default_setup() -> Dictionary:
+	return {}
+
+
 ## Starts a game. `player_ids` is the seat order. `setup` is game-specific data the game needs
 ## to begin (a board, a deck list, ...), `settings` the house rules, `seed_value` the seed for
 ## the game's Prng. Returns {ok, state, events} or a failure.

@@ -36,6 +36,17 @@ func submit_action(_action: Dictionary) -> void:
 	pass
 
 
+## Whether this screen may start a new game with the same players (the host, or hot-seat).
+func can_rematch() -> bool:
+	return false
+
+
+## Starts a new game with the same players and settings. Every screen jumps to the fresh game
+## (reason "rematch") instead of replaying anything. Returns {ok} or a failure.
+func rematch() -> Dictionary:
+	return CoreResult.failure(ErrorCodes.NOT_HOST, "Only the host can start a rematch.")
+
+
 ## The rules object, for the screen's read-only questions (is_finished, current_player).
 func rules() -> GameRules:
 	return null

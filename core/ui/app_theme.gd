@@ -54,6 +54,13 @@ static func build() -> Theme:
 	panel.content_margin_bottom = Tokens.SPACE_L
 	theme.set_stylebox("panel", "PanelContainer", panel)
 
+	# check buttons are plain rows of text with a switch, not teal buttons
+	for state: String in ["normal", "hover", "pressed", "disabled", "hover_pressed", "focus"]:
+		var flat: StyleBoxEmpty = StyleBoxEmpty.new()
+		flat.content_margin_top = Tokens.SPACE_S / 2.0
+		flat.content_margin_bottom = Tokens.SPACE_S / 2.0
+		theme.set_stylebox(state, "CheckButton", flat)
+	theme.set_color("font_disabled_color", "CheckButton", Tokens.INK.lerp(Tokens.PAPER_CREAM, 0.55))
 	theme.set_color("font_color", "CheckButton", Tokens.INK)
 	theme.set_color("font_hover_color", "CheckButton", Tokens.INK)
 	theme.set_color("font_pressed_color", "CheckButton", Tokens.INK)

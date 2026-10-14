@@ -31,6 +31,10 @@ func start() -> Dictionary:
 	return _begin(REASON_START)
 
 
+func can_rematch() -> bool:
+	return true
+
+
 ## A new game with the same players and settings (host-only in a network game). Every screen
 ## jumps to the fresh game rather than replaying anything.
 func rematch() -> Dictionary:

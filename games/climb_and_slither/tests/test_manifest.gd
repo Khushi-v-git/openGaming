@@ -63,13 +63,15 @@ func test_the_game_can_carry_on_with_two_players_present() -> void:
 	assert_lte(manifest["min_active_players"], manifest["min_players"])
 
 
-func test_a_game_without_a_ui_yet_is_registered_but_not_listed_on_the_home_screen() -> void:
+func test_the_game_has_a_ui_and_a_settings_scene_and_is_listed_on_the_home_screen() -> void:
 	var registry: GameRegistry = _registry()
-	assert_eq(registry.get_manifest("climb_and_slither")["ui_scene"], "")
-	assert_false(registry.has_ui("climb_and_slither"))
-	assert_null(registry.load_ui_scene("climb_and_slither"))
+	assert_true(registry.has_ui("climb_and_slither"))
+	assert_not_null(registry.load_ui_scene("climb_and_slither"))
+	assert_not_null(registry.load_settings_scene("climb_and_slither"))
+	var listed: Array[String] = []
 	for manifest: Dictionary in registry.playable():
-		assert_ne(manifest["id"], "climb_and_slither")
+		listed.append(manifest["id"])
+	assert_true(listed.has("climb_and_slither"))
 
 
 func test_the_registry_creates_working_rules_from_the_manifest() -> void:
