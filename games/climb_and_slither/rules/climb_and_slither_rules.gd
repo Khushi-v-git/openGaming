@@ -25,6 +25,14 @@ const COLORS: Array[String] = ["red", "blue", "green", "yellow"]
 const PHASE_IN_PROGRESS: String = "in_progress"
 const PHASE_FINISHED: String = "finished"
 
+## Everything in a state except what is host-only. view_for copies exactly these keys.
+const PUBLIC_KEYS: Array[String] = [
+	"state_version", "game_id", "phase", "board", "settings", "players", "positions",
+	"current_player", "extra_turn", "last_roll", "turn_number", "rolls", "winner",
+]
+## Host-only: never sent to players and never in view_for output.
+const HOST_ONLY_KEYS: Array[String] = ["rng"]
+
 const _STATE_KEYS: Array[String] = [
 	"state_version", "game_id", "phase", "board", "settings", "players", "positions",
 	"current_player", "extra_turn", "last_roll", "turn_number", "rolls", "winner", "rng",
@@ -163,6 +171,20 @@ func apply(state: Dictionary, player_id: String, action: Dictionary, active_play
 		next["turn_number"] = int(next["turn_number"]) + 1
 		events.append({"type": "turn_changed", "player_id": following})
 	return CoreResult.success({"state": next, "events": events})
+
+
+## What one player may see. There is no hidden information in this game, but every game has
+## this function (rule 9) and the host must only ever broadcast views, never raw state. The
+## view is built from a whitelist, so host-only data (the random generator in `rng`) is never
+## included, and anything added to the state later stays private until it is listed here.
+## `you` is the player the view was made for.
+func view_for(state: Dictionary, player_id: String) -> Dictionary:
+	var view: Dictionary = {}
+	for key: String in PUBLIC_KEYS:
+		if state.has(key):
+			view[key] = state[key].duplicate(true) if state[key] is Array or state[key] is Dictionary else state[key]
+	view["you"] = player_id
+	return view
 
 
 ## Hands the turn on if the current player is not among the active players (they dropped
