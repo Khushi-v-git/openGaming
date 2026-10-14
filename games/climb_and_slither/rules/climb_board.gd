@@ -16,7 +16,12 @@ extends RefCounted
 ##   - snakes go down and ladders go up;
 ##   - a jump's end is never another jump's start: no chains, hence no loops, and a
 ##     landing triggers at most one jump;
-##   - shared end squares are allowed.
+##   - shared end squares are allowed;
+##   - the last square can be reached: a search from square 0 over dice rolls 1 to 6 plus the
+##     board's jumps must get there. Otherwise nobody could ever win (for example six snake
+##     heads in a row, which cannot be crossed, or a trap near the start). The search uses the
+##     strictest house rule (an overshooting roll does not move), so a board that passes is
+##     winnable under every allowed combination of house rules.
 
 const MIN_SIZE: int = 10
 const MAX_SIZE: int = 400
@@ -57,6 +62,7 @@ static func validate(data: Dictionary) -> Dictionary:
 		return _bad("'name' must be text.")
 
 	var starts: Dictionary = {}  # square -> kind
+	var jump_ends: Dictionary = {}  # start square -> end square
 	var clean: Dictionary = {KIND_SNAKE: [], KIND_LADDER: []}
 	for kind: String in [KIND_SNAKE, KIND_LADDER]:
 		var list_key: String = "snakes" if kind == KIND_SNAKE else "ladders"
@@ -68,12 +74,20 @@ static func validate(data: Dictionary) -> Dictionary:
 			if not CoreResult.is_ok(checked):
 				return checked
 			starts[checked["from"]] = kind
+			jump_ends[checked["from"]] = checked["to"]
 			(clean[kind] as Array).append({"from": checked["from"], "to": checked["to"]})
 
 	for kind: String in [KIND_SNAKE, KIND_LADDER]:
 		for jump: Dictionary in clean[kind]:
 			if starts.has(jump["to"]):
 				return _bad("The %s from %d ends on square %d, which starts a %s: jumps may not chain." % [kind, jump["from"], jump["to"], starts[jump["to"]]])
+
+	var reachable: Dictionary = _reachable(size, jump_ends)
+	if not reachable.has(size):
+		var furthest: int = 0
+		for square: int in reachable:
+			furthest = maxi(furthest, square)
+		return _bad("The last square (%d) can never be reached: whatever is rolled, nobody gets further than square %d. Look for six or more snake heads in a row, or a trap near the start." % [size, furthest])
 
 	var snakes: Array = clean[KIND_SNAKE]
 	var ladders: Array = clean[KIND_LADDER]
@@ -88,6 +102,17 @@ static func validate(data: Dictionary) -> Dictionary:
 	}})
 
 
+## Every square a player can ever stand on, found by searching from square 0 with dice rolls
+## 1 to 6 and the board's jumps (an overshooting roll does not move). The last square is in the
+## result exactly when the board is winnable. Takes a validated board. Returns {square: true}.
+static func reachable_squares(board: Dictionary) -> Dictionary:
+	var jump_ends: Dictionary = {}
+	for kind_list: Array in [board["snakes"], board["ladders"]]:
+		for jump: Dictionary in kind_list:
+			jump_ends[jump["from"]] = jump["to"]
+	return _reachable(board["size"], jump_ends)
+
+
 ## The jump that starts on `square`, as {kind, from, to}, or {} if there is none.
 static func jump_at(board: Dictionary, square: int) -> Dictionary:
 	for jump: Dictionary in board["snakes"]:
@@ -97,6 +122,26 @@ static func jump_at(board: Dictionary, square: int) -> Dictionary:
 		if jump["from"] == square:
 			return {"kind": KIND_LADDER, "from": square, "to": jump["to"]}
 	return {}
+
+
+static func _reachable(size: int, jump_ends: Dictionary) -> Dictionary:
+	var seen: Dictionary = {0: true}
+	var queue: Array[int] = [0]
+	var head: int = 0
+	while head < queue.size():
+		var at: int = queue[head]
+		head += 1
+		if at == size:
+			continue
+		for roll: int in range(1, 7):
+			var target: int = at + roll
+			if target > size:
+				break  # overshooting does not move (the strictest house rule)
+			var landing: int = jump_ends.get(target, target)
+			if not seen.has(landing):
+				seen[landing] = true
+				queue.append(landing)
+	return seen
 
 
 static func _check_jump(entry: Variant, kind: String, size: int, starts: Dictionary) -> Dictionary:

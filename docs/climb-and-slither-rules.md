@@ -29,7 +29,13 @@ switched off). `ClimbSettings.normalize` still refuses the combination as a seco
 
 Every start square is unique and is not square 1 or the last square; snakes go down, ladders go
 up; no jump ends on another jump's start (so no chains and no loops: a landing triggers at most
-one jump); shared end squares are fine. `ClimbBoard.validate` enforces all of it.
+one jump); shared end squares are fine. The last square must also be reachable: a search from
+square 0 over dice rolls 1 to 6 plus the jumps has to get there (six snake heads in a row make an
+uncrossable wall, and a trap near the start can lock everyone in). The search uses the strictest
+house rule (an overshoot does not move), so a board that passes is winnable under every allowed
+combination of house rules. The error says how far anyone can get. `ClimbBoard.validate` enforces
+all of it; `ClimbBoard.reachable_squares` returns the squares a player can stand on (useful for a
+board editor).
 
 ## How the host drives it
 

@@ -190,7 +190,10 @@ docs/
   rules code. Validate it: every start square is unique and is not square 1 or
   100 (so no square is both a snake and a ladder start); a jump's end is never
   another jump's start (no chains, no loops); snakes go down and ladders go up.
-  Shared end squares are allowed. A landing triggers at most one jump.
+  Shared end squares are allowed. A landing triggers at most one jump. The
+  last square must be reachable: a search from square 0 over dice moves 1 to 6
+  plus the board's jumps must be able to get there (so six snake heads in a
+  row, or a trap near the start, are refused).
 - House rules are settings, not hardcoded: exact roll needed to finish on 100,
   extra turn on a 6, number of dice. Defaults: exact finish off, extra turn on
   a 6 off, one die. With two dice, "a 6" means either die shows a 6. There is

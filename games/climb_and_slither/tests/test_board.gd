@@ -295,3 +295,159 @@ func test_missing_unreadable_and_non_object_files_are_refused_with_a_clear_messa
 	var list: Dictionary = ClimbBoard.load_file(_write("list.json", "[1, 2]"))
 	assert_eq(CoreResult.error_code(list), ClimbErrors.INVALID_BOARD)
 	assert_string_contains(str(list["error"]["message"]), "JSON object")
+
+
+# --- the last square must be reachable (winnability) --------------------------------------------
+
+## `count` snake heads on consecutive squares starting at `first`, all sliding down to square 1.
+func _heads(first: int, count: int) -> Array:
+	var snakes: Array = []
+	for square: int in range(first, first + count):
+		snakes.append(_jump(square, 1))
+	return snakes
+
+
+func test_a_board_whose_last_six_squares_are_all_snake_heads_is_refused() -> void:
+	# size 20: heads on 14..19 and nothing leads to the last square, so nobody can ever finish
+	var data: Dictionary = _data(_heads(14, 6), [])
+	assert_eq(_error(data), ClimbErrors.INVALID_BOARD)
+	var message: String = _message(data)
+	assert_string_contains(message, "last square")
+	assert_string_contains(message, "(20)")
+	assert_string_contains(message, "can never be reached")
+	assert_string_contains(message, "square 13", "it says how far anyone can get")
+
+
+func test_the_same_six_snake_heads_are_fine_if_a_ladder_goes_straight_to_the_last_square() -> void:
+	var r: Dictionary = ClimbBoard.validate(_data(_heads(14, 6), [_jump(5, 20)]))
+	assert_true(CoreResult.is_ok(r), str(r))
+
+
+func test_five_snake_heads_in_a_row_can_be_crossed() -> void:
+	assert_true(CoreResult.is_ok(ClimbBoard.validate(_data(_heads(14, 5), []))), "square 19 is free: land there and roll a 1")
+	assert_true(CoreResult.is_ok(ClimbBoard.validate(_data(_heads(15, 5), []))), "square 14 is free: land there and roll a 6")
+
+
+func test_six_snake_heads_in_a_row_anywhere_form_a_wall_that_cannot_be_crossed() -> void:
+	var wall: Dictionary = _data(_heads(8, 6), [], 30, 6)  # heads on 8..13
+	assert_eq(_error(wall), ClimbErrors.INVALID_BOARD)
+	assert_string_contains(_message(wall), "square 7")
+	assert_true(CoreResult.is_ok(ClimbBoard.validate(_data(_heads(8, 5), [], 30, 6))), "five in a row is crossable")
+
+
+func test_a_ladder_that_skips_the_wall_makes_the_board_winnable_again() -> void:
+	assert_true(CoreResult.is_ok(ClimbBoard.validate(_data(_heads(8, 6), [_jump(3, 20)], 30, 6))))
+
+
+func test_a_ladder_into_the_wall_does_not_help_if_it_lands_inside_it() -> void:
+	# a ladder cannot end on a snake head (that would be a chain), so landing inside the wall is
+	# impossible; a ladder to just before it leads nowhere new
+	var data: Dictionary = _data(_heads(8, 6), [_jump(3, 7)], 30, 6)
+	assert_eq(_error(data), ClimbErrors.INVALID_BOARD)
+
+
+func test_a_trap_near_the_start_is_refused() -> void:
+	# heads on 2..7 all slide to 1: a player can only ever stand on 0 or 1
+	var data: Dictionary = _data(_heads(2, 6), [])
+	assert_eq(_error(data), ClimbErrors.INVALID_BOARD)
+	assert_string_contains(_message(data), "square 1")
+
+
+func test_a_board_with_many_snakes_but_a_way_through_is_fine() -> void:
+	var snakes: Array = _heads(3, 3) + _heads(9, 4) + _heads(15, 3)
+	assert_true(CoreResult.is_ok(ClimbBoard.validate(_data(snakes, []))))
+
+
+func test_a_ladder_that_is_the_only_way_forward_counts() -> void:
+	# heads on 2..7 would trap the start, but a ladder from 1 is not allowed; so the only escape
+	# is a roll landing on... nothing: the board stays refused
+	assert_eq(_error(_data(_heads(2, 6), [_jump(8, 20)])), ClimbErrors.INVALID_BOARD, "square 8 cannot be reached from 0 or 1")
+
+
+func test_the_classic_board_is_winnable_by_an_independent_search() -> void:
+	var board: Dictionary = ClimbBoard.load_file()["board"]
+	assert_true(_independent_winnable(board), "checked by a differently written algorithm")
+	assert_true(ClimbBoard.reachable_squares(board).has(100))
+
+
+func test_reachable_squares_includes_the_start_and_everything_a_player_can_stand_on() -> void:
+	var board: Dictionary = ClimbBoard.validate(_data([_jump(15, 3)], [_jump(4, 9)]))["board"]
+	var reachable: Dictionary = ClimbBoard.reachable_squares(board)
+	assert_true(reachable.has(0))
+	assert_true(reachable.has(20))
+	assert_false(reachable.has(15), "landing on a snake head sends you down, you never stand on it")
+	assert_false(reachable.has(4), "same for the foot of a ladder")
+	assert_true(reachable.has(9), "the top of the ladder")
+	assert_true(reachable.has(3), "the tail of the snake")
+
+
+func test_an_unwinnable_board_cannot_start_a_game() -> void:
+	var rules: ClimbAndSlitherRules = ClimbAndSlitherRules.new()
+	var result: Dictionary = rules.new_game(["p1", "p2"], _data(_heads(14, 6), []), {}, 1)
+	assert_eq(CoreResult.error_code(result), ClimbErrors.INVALID_BOARD)
+
+
+func test_a_saved_game_whose_board_was_edited_to_be_unwinnable_is_refused() -> void:
+	var rules: ClimbAndSlitherRules = ClimbAndSlitherRules.new()
+	var state: Dictionary = rules.new_game(["p1", "p2"], ClimbBoard.load_file()["board"], {}, 1)["state"]
+	assert_true(CoreResult.is_ok(rules.validate_state(state)))
+	state["board"]["snakes"] = []
+	state["board"]["ladders"] = []
+	for square: int in range(94, 100):
+		state["board"]["snakes"].append({"from": square, "to": 1})
+	assert_eq(CoreResult.error_code(rules.validate_state(state)), ClimbErrors.INVALID_STATE)
+
+
+func test_big_boards_are_checked_quickly() -> void:
+	var started: int = Time.get_ticks_msec()
+	assert_true(CoreResult.is_ok(ClimbBoard.validate(_data([], [], 400, 20))))
+	assert_lt(Time.get_ticks_msec() - started, 500)
+
+
+# --- the validator against a separately written check, on many random boards -----------------------
+
+## Winnability by repeated relaxation until nothing changes: deliberately a different algorithm
+## from the validator's queue search, written from the rule ("dice 1..6 plus jumps from square 0").
+func _independent_winnable(board: Dictionary) -> bool:
+	var size: int = board["size"]
+	var jump_to: Dictionary = {}
+	for kind_list: Array in [board["snakes"], board["ladders"]]:
+		for jump: Dictionary in kind_list:
+			jump_to[int(jump["from"])] = int(jump["to"])
+	var can_stand: Dictionary = {0: true}
+	var changed: bool = true
+	while changed:
+		changed = false
+		for square: int in range(0, size):
+			if not can_stand.has(square):
+				continue
+			for roll: int in range(1, 7):
+				var target: int = square + roll
+				if target > size:
+					continue
+				var landing: int = jump_to.get(target, target)
+				if not can_stand.has(landing):
+					can_stand[landing] = true
+					changed = true
+	return can_stand.has(size)
+
+
+func test_the_validator_agrees_with_the_independent_check_on_random_boards() -> void:
+	var prng: Prng = Prng.new(31415)
+	var winnable: int = 0
+	var unwinnable: int = 0
+	for i: int in 600:
+		# every other board is dense in snakes, every third has a wall of 5 to 7 snake heads
+		var data: Dictionary = ClimbRig.random_board_data(prng, i % 2 == 0, i % 3 == 0)
+		var verdict: Dictionary = ClimbBoard.validate(data)
+		var expected: bool = _independent_winnable(data)
+		assert_eq(CoreResult.is_ok(verdict), expected, "board %d (size %d): validator and independent check disagree" % [i, data["size"]])
+		if expected:
+			winnable += 1
+		else:
+			unwinnable += 1
+			assert_eq(CoreResult.error_code(verdict), ClimbErrors.INVALID_BOARD)
+			assert_string_contains(str(verdict["error"]["message"]), "can never be reached")
+	gut.p("winnability: compared %d winnable and %d unwinnable random boards, validator and independent check agreed on all" % [winnable, unwinnable])
+	assert_gt(winnable, 100, "plenty of winnable boards were compared")
+	assert_gt(unwinnable, 60, "plenty of unwinnable boards were compared")
