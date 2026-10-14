@@ -217,8 +217,13 @@ func test_rejoin_button_is_hidden_after_being_removed_by_the_host() -> void:
 
 # --- connecting state and Cancel --------------------------------------------------
 
+## Relay delays are counted in frames but handshake timeouts run on the real clock, so
+## stretch the timeouts: a slow or loaded machine must not turn a delay into a timeout.
+const PATIENT: Dictionary = {"handshake_timeout_msec": 600000, "host_silence_timeout_msec": 600000, "ping_timeout_msec": 600000}
+
+
 func _relay_scene(relay: FakeRelay, player_name: String, extra: Dictionary = {}) -> LobbyScene:
-	var options: Dictionary = {"transport": {"transport": "fake_relay", "relay": relay}}
+	var options: Dictionary = {"transport": {"transport": "fake_relay", "relay": relay}, "session_options": PATIENT}
 	options.merge(extra, true)
 	return _make_scene(player_name, options)
 

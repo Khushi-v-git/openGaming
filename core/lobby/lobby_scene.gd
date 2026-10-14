@@ -19,6 +19,8 @@ extends Control
 ##   join_game_id                optional: insist on this game when joining (normally unset)
 ##   transport                   config Dictionary, default TransportFactory.default_config()
 ##   player_name                 optional prefill
+##   session_options             optional Dictionary passed to HostSession/ClientSession
+##                               (timeouts, limits); tests use it to stretch timeouts
 
 signal game_started(state: Dictionary)
 
@@ -235,7 +237,7 @@ func host_session() -> void:
 	var config: Dictionary = _transport_config.duplicate()
 	if port_spin != null:
 		config["port"] = int(port_spin.value)
-	_host = LobbyHost.new(TransportFactory.create(config), str(options["app_version"]), game_id, cleaned["name"], limits["min"], limits["max"])
+	_host = LobbyHost.new(TransportFactory.create(config), str(options["app_version"]), game_id, cleaned["name"], limits["min"], limits["max"], options.get("session_options", {}))
 	_host.hosting.connect(_on_hosting)
 	_host.host_failed.connect(_on_host_failed)
 	_host.state_changed.connect(_on_state_changed)
@@ -289,7 +291,7 @@ func leave() -> void:
 
 func _begin_join(address: String, player_name: String, identity: Dictionary) -> void:
 	var config: Dictionary = _transport_config.duplicate()
-	_client = LobbyClient.new(TransportFactory.create(config), str(options["app_version"]), str(options.get("join_game_id", "")))
+	_client = LobbyClient.new(TransportFactory.create(config), str(options["app_version"]), str(options.get("join_game_id", "")), options.get("session_options", {}))
 	var registry: GameRegistry = options.get("game_registry", null)
 	if registry != null:
 		_client.game_validator = registry.validator()
