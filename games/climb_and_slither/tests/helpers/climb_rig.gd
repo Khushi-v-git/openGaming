@@ -78,8 +78,10 @@ static func event_types(events: Array) -> Array[String]:
 ## winnability, so it can be unwinnable. `dense` makes many snakes and small boards, which
 ## produces unwinnable ones sometimes; `wall` adds a run of 5 to 7 consecutive snake heads (all
 ## sliding to square 1), which is uncrossable from 6 up. Used to compare the validator against an
-## independent check.
-static func random_board_data(prng: Prng, dense: bool = false, wall: bool = false) -> Dictionary:
+## independent check. `end_trap` fills the squares just before the last one with snake heads except
+## the square right before it, which a ladder leads to: one die can finish from there (rolling a
+## 1) but two dice, whose smallest roll is 2, cannot.
+static func random_board_data(prng: Prng, dense: bool = false, wall: bool = false, end_trap: bool = false) -> Dictionary:
 	var columns: int = [5, 6, 8, 10][prng.range_int(0, 3)]
 	var rows: int = prng.range_int(2, 6) if dense else prng.range_int(3, 14)
 	var size: int = columns * rows
@@ -89,8 +91,19 @@ static func random_board_data(prng: Prng, dense: bool = false, wall: bool = fals
 		var length: int = prng.range_int(5, 7)
 		var first: int = prng.range_int(2, size - length)
 		for square: int in range(first, first + length):
-			starts[square] = true
-			jumps.append({"snake": true, "from": square, "to": 1})
+			if not starts.has(square):
+				starts[square] = true
+				jumps.append({"snake": true, "from": square, "to": 1})
+	if end_trap and size >= 16:
+		for square: int in range(size - 11, size - 1):
+			if not starts.has(square):
+				starts[square] = true
+				jumps.append({"snake": true, "from": square, "to": 1})
+		for _k: int in prng.range_int(1, 2):
+			var foot: int = prng.range_int(2, size - 12)
+			if not starts.has(foot):
+				starts[foot] = true
+				jumps.append({"snake": false, "from": foot, "to": size - 1})
 	var attempts: int = prng.range_int(size / 3, size) if dense else prng.range_int(0, maxi(1, size / 5))
 	for _i: int in attempts:
 		var from: int = prng.range_int(2, size - 1)

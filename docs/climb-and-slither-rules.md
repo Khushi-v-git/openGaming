@@ -29,13 +29,17 @@ switched off). `ClimbSettings.normalize` still refuses the combination as a seco
 
 Every start square is unique and is not square 1 or the last square; snakes go down, ladders go
 up; no jump ends on another jump's start (so no chains and no loops: a landing triggers at most
-one jump); shared end squares are fine. The last square must also be reachable: a search from
-square 0 over dice rolls 1 to 6 plus the jumps has to get there (six snake heads in a row make an
-uncrossable wall, and a trap near the start can lock everyone in). The search uses the strictest
-house rule (an overshoot does not move), so a board that passes is winnable under every allowed
-combination of house rules. The error says how far anyone can get. `ClimbBoard.validate` enforces
-all of it; `ClimbBoard.reachable_squares` returns the squares a player can stand on (useful for a
-board editor).
+one jump); shared end squares are fine. The last square must also be reachable for every allowed number of dice: a search from
+square 0 over rolls 1 to 6 (one die) and over rolls 2 to 12 (two dice), plus the jumps, has to
+get there (six snake heads in a row make a wall one die cannot cross; a trap near the start can
+lock everyone in; with two dice a lone free square right before the last cannot be finished from,
+because the smallest roll is 2). Both searches use the strictest house rule (an overshoot does not
+move), so a board that passes is winnable under every combination of house rules, including ones
+the settings do not allow today. That is a little stricter than needed for two dice with exact
+finish off, where an overshoot lands on the last square. The error names the dice count and says
+how far anyone can get. `ClimbBoard.validate` enforces
+all of it; `ClimbBoard.reachable_squares(board, dice_count)` returns the squares a player can stand on
+(useful for a board editor).
 
 ## How the host drives it
 
