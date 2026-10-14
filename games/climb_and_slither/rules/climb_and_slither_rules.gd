@@ -75,6 +75,134 @@ func new_game(player_ids: Array, board: Dictionary, settings: Dictionary, seed_v
 	return CoreResult.success({"state": state, "events": []})
 
 
+## Applies one action by one player. The only action is {"type": "roll"}: the dice always
+## come from the seeded generator in the state, never from the caller (so any other field in
+## the action is refused). `active_players` are the players present and still in the game, in
+## seat order; the turn passes to the next of them, and an absent player cannot act. Leave it
+## empty to mean everybody.
+##
+## Returns {ok: true, state, events} or {ok: false, error: {code, message}}; on error the
+## state you passed in is untouched. Events (in order) tell a UI what happened so it never
+## has to work out rules itself:
+##   rolled {player_id, dice, total}      moved {player_id, from, to, path}
+##   overshoot {player_id, from, needed}  jumped {player_id, kind, from, to}
+##   extra_turn {player_id}               turn_changed {player_id}
+##   won {player_id}
+func apply(state: Dictionary, player_id: String, action: Dictionary, active_players: Array = []) -> Dictionary:
+	var action_check: Dictionary = _check_action(action)
+	if not CoreResult.is_ok(action_check):
+		return action_check
+	var state_check: Dictionary = _quick_check(state)
+	if not CoreResult.is_ok(state_check):
+		return state_check
+	if state["phase"] == PHASE_FINISHED:
+		return CoreResult.failure(ClimbErrors.GAME_OVER, "The game is over.")
+	var order: Array[String] = _seat_order(state)
+	if not order.has(player_id):
+		return CoreResult.failure(ErrorCodes.UNKNOWN_PLAYER, "%s is not playing in this game." % player_id)
+	var active: Array[String] = _strings(active_players)
+	if not active.is_empty() and not active.has(player_id):
+		return CoreResult.failure(ClimbErrors.PLAYER_INACTIVE, "You are not in the game right now.")
+	if state["current_player"] != player_id:
+		return CoreResult.failure(ClimbErrors.NOT_YOUR_TURN, "It is not your turn.")
+	var prng: Prng = Prng.restore(state["rng"]["seed"], state["rng"]["state"])
+	if prng == null:
+		return CoreResult.failure(ClimbErrors.INVALID_STATE, "The random generator state is not valid.")
+
+	var next: Dictionary = state.duplicate(true)
+	var events: Array = []
+	var board: Dictionary = next["board"]
+	var settings: Dictionary = next["settings"]
+	var size: int = board["size"]
+
+	var dice: Array[int] = draw_dice(prng, settings["dice_count"])
+	var total: int = 0
+	for die: int in dice:
+		total += die
+	next["rng"]["state"] = prng.state_text()
+	next["rolls"] = int(next["rolls"]) + 1
+	next["last_roll"] = {"player_id": player_id, "dice": dice.duplicate(), "total": total}
+	events.append({"type": "rolled", "player_id": player_id, "dice": dice.duplicate(), "total": total})
+
+	var from: int = next["positions"][player_id]
+	var target: int = from + total
+	if target > size:
+		if settings["exact_finish"]:
+			events.append({"type": "overshoot", "player_id": player_id, "from": from, "needed": size - from})
+			target = from  # stays where it is
+		else:
+			target = size
+	var finished: bool = false
+	if target != from:
+		var path: Array[int] = []
+		for square: int in range(from + 1, target + 1):
+			path.append(square)
+		events.append({"type": "moved", "player_id": player_id, "from": from, "to": target, "path": path})
+		next["positions"][player_id] = target
+		if target == size:
+			finished = true
+		else:
+			var jump: Dictionary = ClimbBoard.jump_at(board, target)
+			if not jump.is_empty():
+				events.append({"type": "jumped", "player_id": player_id, "kind": jump["kind"], "from": target, "to": jump["to"]})
+				next["positions"][player_id] = jump["to"]
+				finished = jump["to"] == size
+
+	if finished:
+		next["phase"] = PHASE_FINISHED
+		next["winner"] = player_id
+		next["extra_turn"] = false
+		events.append({"type": "won", "player_id": player_id})
+	elif settings["extra_turn_on_six"] and dice.has(ClimbSettings.DIE_SIDES):
+		next["extra_turn"] = true
+		events.append({"type": "extra_turn", "player_id": player_id})
+	else:
+		next["extra_turn"] = false
+		var following: String = TurnOrder.next_active(order, player_id, active if not active.is_empty() else order)
+		next["current_player"] = following
+		next["turn_number"] = int(next["turn_number"]) + 1
+		events.append({"type": "turn_changed", "player_id": following})
+	return CoreResult.success({"state": next, "events": events})
+
+
+## Hands the turn on if the current player is not among the active players (they dropped
+## while it was their turn). A pending extra turn dies with it. The host calls this when it
+## continues without waiting, and after anyone leaves or returns. Does nothing if the game is
+## over, `active_players` is empty (= everybody) or the current player is present. Fails with
+## NO_ACTIVE_PLAYERS if none of the game's players is active.
+## Returns {ok, state, events: [turn_skipped, turn_changed]} like apply().
+func settle(state: Dictionary, active_players: Array = []) -> Dictionary:
+	var state_check: Dictionary = _quick_check(state)
+	if not CoreResult.is_ok(state_check):
+		return state_check
+	var active: Array[String] = _strings(active_players)
+	if state["phase"] == PHASE_FINISHED or active.is_empty() or active.has(state["current_player"]):
+		return CoreResult.success({"state": state.duplicate(true), "events": []})
+	var order: Array[String] = _seat_order(state)
+	var following: String = TurnOrder.next_active(order, state["current_player"], active)
+	if following == "":
+		return CoreResult.failure(ClimbErrors.NO_ACTIVE_PLAYERS, "None of the players in this game is present.")
+	var next: Dictionary = state.duplicate(true)
+	var skipped: String = next["current_player"]
+	next["current_player"] = following
+	next["extra_turn"] = false
+	next["turn_number"] = int(next["turn_number"]) + 1
+	var events: Array = [
+		{"type": "turn_skipped", "player_id": skipped},
+		{"type": "turn_changed", "player_id": following},
+	]
+	return CoreResult.success({"state": next, "events": events})
+
+
+## Rolls `count` dice, one `range_int(1, 6)` draw per die in order. Public so tests (and the
+## replay checker) can reproduce exactly what apply() draws.
+static func draw_dice(prng: Prng, count: int) -> Array[int]:
+	var dice: Array[int] = []
+	for _i: int in count:
+		dice.append(prng.range_int(1, ClimbSettings.DIE_SIDES))
+	return dice
+
+
 ## Checks every invariant of a game state: used by tests, and by the host before it trusts
 ## a loaded save. Returns {ok} or INVALID_STATE with a message saying what is wrong.
 func validate_state(state: Dictionary) -> Dictionary:
@@ -180,3 +308,42 @@ func _validate_last_roll(last_roll: Variant, ids: Array[String], dice_count: int
 
 func _invalid(message: String) -> Dictionary:
 	return CoreResult.failure(ClimbErrors.INVALID_STATE, message)
+
+
+## The action must be exactly {"type": "roll"}.
+func _check_action(action: Dictionary) -> Dictionary:
+	if typeof(action.get("type")) != TYPE_STRING:
+		return CoreResult.failure(ErrorCodes.BAD_ACTION, "An action needs a text type.")
+	if action["type"] != "roll":
+		return CoreResult.failure(ErrorCodes.UNKNOWN_ACTION, "Unknown action %s." % action["type"])
+	if action.size() != 1:
+		return CoreResult.failure(ErrorCodes.BAD_ACTION, "A roll takes no extra fields: the game rolls the dice.")
+	return CoreResult.success()
+
+
+## A cheap sanity check on the fields apply() reads. Full checking is validate_state().
+func _quick_check(state: Dictionary) -> Dictionary:
+	for key: String in _STATE_KEYS:
+		if not state.has(key):
+			return _invalid("The state has no %s." % key)
+	if typeof(state["phase"]) != TYPE_STRING or typeof(state["current_player"]) != TYPE_STRING:
+		return _invalid("The state is damaged.")
+	if typeof(state["board"]) != TYPE_DICTIONARY or typeof(state["settings"]) != TYPE_DICTIONARY or typeof(state["positions"]) != TYPE_DICTIONARY or typeof(state["rng"]) != TYPE_DICTIONARY or typeof(state["players"]) != TYPE_ARRAY:
+		return _invalid("The state is damaged.")
+	if typeof(state["rng"].get("seed")) != TYPE_STRING or typeof(state["rng"].get("state")) != TYPE_STRING:
+		return _invalid("The random generator state is damaged.")
+	return CoreResult.success()
+
+
+func _seat_order(state: Dictionary) -> Array[String]:
+	var ids: Array[String] = []
+	for entry: Variant in state["players"]:
+		ids.append(str(entry["player_id"]))
+	return ids
+
+
+func _strings(values: Array) -> Array[String]:
+	var out: Array[String] = []
+	for value: Variant in values:
+		out.append(str(value))
+	return out
