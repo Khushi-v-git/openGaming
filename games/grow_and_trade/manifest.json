@@ -1,0 +1,11 @@
+{
+  "id": "grow_and_trade",
+  "display_name": "Grow & Trade",
+  "description": "Settle a shared island, collect what grows, and trade your way to the target. Online only.",
+  "icon": "res://games/grow_and_trade/assets/app-icon-512.svg",
+  "min_players": 3,
+  "max_players": 6,
+  "min_active_players": 3,
+  "online_only": true,
+  "rules_class": "res://games/grow_and_trade/rules/grow_and_trade_rules.gd"
+}
