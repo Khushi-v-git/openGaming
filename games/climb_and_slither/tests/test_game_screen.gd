@@ -49,7 +49,6 @@ func test_the_screen_shows_the_players_the_board_and_whose_turn_it_is() -> void:
 	assert_eq(screen.roll_button.text, "Roll for Name p1")
 	assert_false(screen.roll_button.disabled)
 	assert_false(screen.overlay.visible)
-	assert_false(screen.skip_button.visible)
 	assert_eq((screen.player_rows["p1"]["square"] as Label).text, "Start")
 
 
@@ -86,13 +85,39 @@ func test_the_roll_button_is_off_while_animations_play_and_back_after() -> void:
 	var screen: ClimbGameScreen = made[0]
 	_roll(screen)
 	assert_true(screen.roll_button.disabled, "busy: no second roll while animating")
-	assert_true(screen.skip_button.visible)
 	var before: int = screen.timeline.pending_count()
 	_roll(screen)  # pressing a disabled button does nothing: still one batch
 	assert_eq(screen.timeline.pending_count(), before)
 	await _wait_idle(screen)
 	assert_false(screen.roll_button.disabled)
-	assert_false(screen.skip_button.visible)
+
+
+func test_there_are_no_speed_or_skip_buttons_only_the_roll_and_menu_buttons() -> void:
+	var made: Array = await _screen()
+	var screen: ClimbGameScreen = made[0]
+	var allowed: Array = [screen.roll_button, screen.menu_button, screen.rematch_button, screen.overlay_menu_button]
+	for node: Node in screen.find_children("*", "Button", true, false):
+		var inside_dialog: bool = false
+		var up: Node = node.get_parent()
+		while up != null and up != screen:
+			inside_dialog = inside_dialog or up is ConfirmationDialog
+			up = up.get_parent()
+		if not inside_dialog:
+			assert_true(allowed.has(node), "unexpected button: %s" % (node as Button).text)
+	assert_eq(screen.find_children("*", "OptionButton", true, false).size(), 0, "no speed picker")
+
+
+func test_space_skips_a_running_animation_and_rolls_when_idle() -> void:
+	var made: Array = await _screen(Vector2i(1280, 720), ["p1", "p2"], {}, 11, "1x")
+	var screen: ClimbGameScreen = made[0]
+	var space: InputEventKey = InputEventKey.new()
+	space.keycode = KEY_SPACE
+	space.pressed = true
+	screen._unhandled_key_input(space)  # idle: it rolls
+	assert_true(screen.timeline.is_busy())
+	screen._unhandled_key_input(space)  # busy: it skips to the end
+	assert_false(screen.timeline.is_busy())
+	assert_false(screen.roll_button.disabled)
 
 
 func test_skip_ends_the_animation_on_the_true_state() -> void:
@@ -100,7 +125,7 @@ func test_skip_ends_the_animation_on_the_true_state() -> void:
 	var screen: ClimbGameScreen = made[0]
 	_roll(screen)
 	assert_true(screen.timeline.is_busy())
-	screen.skip_button.pressed.emit()
+	screen.skip()
 	assert_false(screen.timeline.is_busy())
 	assert_false(screen.roll_button.disabled)
 	var view: Dictionary = screen.current_view()
@@ -237,7 +262,7 @@ func _panel() -> ClimbSettingsPanel:
 func test_the_settings_panel_starts_with_the_default_rules() -> void:
 	var panel: ClimbSettingsPanel = _panel()
 	assert_eq(panel.settings(), ClimbSettings.defaults())
-	assert_eq(panel.get_child_count(), 3)
+	assert_eq(panel.get_child_count(), 4)
 
 
 func test_choosing_exact_finish_greys_out_two_dice_with_the_rules_tooltip_and_back() -> void:

@@ -7,8 +7,12 @@ extends RefCounted
 ## the bottom row runs left to right, the next right to left, and so on. Square 0 (not on the
 ## board yet) is a start strip under the board, one cell tall, with a slot per seat.
 ##
-## `cell` is the side of one square in pixels and `origin` the top-left of the board, both from
+## `cell` is the side of one square in pixels and `origin` the top-left of the squares, both from
 ## fit(). Positions are in the same coordinate space as `origin`.
+##
+## `strip_gap` (cells) is empty room between the last row and the start strip, so a decorated
+## frame around the squares never touches the strip. fit() can also reserve `frame_cells` of
+## frame round the squares (left, right and top; the strip gap makes room at the bottom).
 
 const START_STRIP_CELLS: float = 1.0
 ## Pawn offsets from a square's centre, in cells, for 1 to 4 pawns sharing a square.
@@ -22,12 +26,14 @@ const _SLOTS: Array = [
 var size: int
 var columns: int
 var rows: int
+var strip_gap: float = 0.0
 
 
-func _init(board_size: int, board_columns: int) -> void:
+func _init(board_size: int, board_columns: int, gap_cells: float = 0.0) -> void:
 	size = board_size
 	columns = board_columns
 	rows = board_size / board_columns
+	strip_gap = gap_cells
 
 
 ## The cell of a square as (column, row counted from the top). Square 0 is (0, rows): the start strip.
@@ -52,36 +58,49 @@ func square_at(column: int, row_from_top: int) -> int:
 	return row_from_bottom * columns + column_in_row + 1
 
 
-## Total height in cells including the start strip.
+## Total height in cells including the gap and the start strip.
 func total_rows() -> float:
-	return float(rows) + START_STRIP_CELLS
+	return float(rows) + strip_gap + START_STRIP_CELLS
 
 
 ## The biggest whole-pixel cell that lets board plus start strip fit in `area` with `margin` all
-## round, and where to put it so it is centred. Returns {cell, origin, board_rect, full_rect}.
-func fit(area: Vector2, margin: float) -> Dictionary:
+## round, and where to put it so it is centred. `frame_cells` of frame are kept free on the left,
+## right and top of the squares. Returns {cell, origin, board_rect, frame_rect, full_rect}:
+## `board_rect` is the squares, `frame_rect` the squares plus their frame, `full_rect` everything.
+func fit(area: Vector2, margin: float, frame_cells: float = 0.0) -> Dictionary:
 	var available: Vector2 = area - Vector2(margin, margin) * 2.0
-	var cell: float = maxf(1.0, floorf(minf(available.x / float(columns), available.y / total_rows())))
+	var wide: float = float(columns) + 2.0 * frame_cells
+	var tall: float = total_rows() + frame_cells
+	var cell: float = maxf(1.0, floorf(minf(available.x / wide, available.y / tall)))
+	var full_size: Vector2 = Vector2(wide, tall) * cell
+	var top_left: Vector2 = ((area - full_size) / 2.0).floor()
+	var origin: Vector2 = top_left + Vector2(frame_cells, frame_cells) * cell
 	var board_size: Vector2 = Vector2(float(columns), float(rows)) * cell
-	var full_size: Vector2 = Vector2(float(columns), total_rows()) * cell
-	var origin: Vector2 = ((area - full_size) / 2.0).floor()
 	return {
 		"cell": cell,
 		"origin": origin,
 		"board_rect": Rect2(origin, board_size),
-		"full_rect": Rect2(origin, full_size),
+		"frame_rect": Rect2(top_left, Vector2(wide, float(rows) + 2.0 * frame_cells) * cell),
+		"full_rect": Rect2(top_left, full_size),
 	}
+
+
+## Width divided by height of everything fit() lays out, for a given frame: lets a screen size
+## the board's area to hug it instead of leaving empty room beside it.
+func aspect(frame_cells: float = 0.0) -> float:
+	return (float(columns) + 2.0 * frame_cells) / (total_rows() + frame_cells)
 
 
 ## The centre of a square's cell. Square 0 is the start strip's first slot.
 func center(square: int, cell: float, origin: Vector2) -> Vector2:
 	var at: Vector2i = cell_of(square)
-	return origin + (Vector2(float(at.x), float(at.y)) + Vector2(0.5, 0.5)) * cell
+	var gap: float = strip_gap if square <= 0 else 0.0
+	return origin + (Vector2(float(at.x), float(at.y) + gap) + Vector2(0.5, 0.5)) * cell
 
 
 ## The slot for the seat-th player waiting on the start strip (square 0).
 func start_slot(seat: int, cell: float, origin: Vector2) -> Vector2:
-	return origin + Vector2(float(seat) + 0.5, float(rows) + 0.5) * cell
+	return origin + Vector2(float(seat) + 0.5, float(rows) + strip_gap + 0.5) * cell
 
 
 ## Offsets from a square's centre for `count` pawns sharing it, in cells.

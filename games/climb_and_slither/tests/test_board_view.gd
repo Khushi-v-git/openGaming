@@ -307,3 +307,17 @@ func test_a_pawn_that_lands_with_another_makes_room_at_once() -> void:
 	var alone: Vector2 = view.pawn_node("p1").position
 	view.animate({"op": "hop", "player_id": "p2", "to": 9, "duration": 0.16}, 0.0, func() -> void: pass)
 	assert_ne(view.pawn_node("p1").position, alone, "the first pawn shifts to share the square")
+
+
+# --- the frame ------------------------------------------------------------------------------------------------
+
+func test_the_frame_is_about_half_a_cell_wide_and_the_start_strip_sits_below_it() -> void:
+	for window: Vector2i in [Vector2i(793, 720), Vector2i(1190, 1080)]:
+		var made: Array = await _view(window)
+		var view: ClimbBoardView = made[1]
+		var squares: Rect2 = Rect2(view.origin, Vector2(view.layout.columns, view.layout.rows) * view.cell)
+		assert_true(view.frame_rect.encloses(squares), "%s: the frame wraps the squares" % str(window))
+		assert_almost_eq(squares.position.x - view.frame_rect.position.x, view.cell * ClimbBoardView.FRAME_CELLS, 1.0)
+		assert_lt(view.frame_rect.end.y, view.square_center(0).y - view.cell * 0.5, "%s: the strip starts below the frame" % str(window))
+		assert_true(Rect2(Vector2.ZERO, Vector2(window)).encloses(view.frame_rect))
+		assert_gte(view.cell, 50.0 if window.y < 800 else 80.0)

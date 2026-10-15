@@ -189,3 +189,47 @@ func test_pawn_offsets_for_every_group_size() -> void:
 		assert_eq(ClimbBoardLayout.pawn_offsets(count).size(), count)
 	assert_eq(ClimbBoardLayout.pawn_offsets(0).size(), 1, "clamped")
 	assert_eq(ClimbBoardLayout.pawn_offsets(9).size(), 4, "clamped")
+
+
+# --- the gap between the squares and the start strip, and the frame -------------------------------------------
+
+func test_the_strip_gap_pushes_the_start_strip_down_and_counts_in_the_height() -> void:
+	var layout: ClimbBoardLayout = ClimbBoardLayout.new(100, 10, 0.6)
+	assert_almost_eq(layout.total_rows(), 11.6, 0.0001)
+	var one: Vector2 = layout.center(1, 60.0, Vector2.ZERO)
+	var strip: Vector2 = layout.center(0, 60.0, Vector2.ZERO)
+	assert_almost_eq(strip.y - one.y, 60.0 * 1.6, 0.001, "one cell plus the gap below square 1")
+	assert_eq(strip.x, one.x)
+	assert_almost_eq(layout.start_slot(2, 60.0, Vector2.ZERO).y, strip.y, 0.001)
+	assert_eq(layout.center(5, 60.0, Vector2.ZERO), ClimbBoardLayout.new(100, 10).center(5, 60.0, Vector2.ZERO), "squares do not move")
+
+
+func test_the_default_gap_is_zero_so_nothing_changes() -> void:
+	assert_eq(ClimbBoardLayout.new(100, 10).strip_gap, 0.0)
+	assert_eq(ClimbBoardLayout.new(100, 10).total_rows(), 11.0)
+
+
+func test_pawns_waiting_stand_on_the_strip_below_the_gap() -> void:
+	var layout: ClimbBoardLayout = ClimbBoardLayout.new(100, 10, 0.6)
+	var spots: Dictionary = layout.pawn_positions({"a": 0, "b": 0}, ["a", "b"], 60.0, Vector2.ZERO)
+	assert_almost_eq((spots["a"] as Vector2).y, 60.0 * (10.0 + 0.6 + 0.5), 0.001)
+
+
+func test_fit_with_a_frame_keeps_the_frame_inside_the_area_and_the_squares_inside_the_frame() -> void:
+	var layout: ClimbBoardLayout = ClimbBoardLayout.new(100, 10, 0.6)
+	for area: Vector2 in [Vector2(640, 720), Vector2(1100, 1000), Vector2(500, 900)]:
+		var fitted: Dictionary = layout.fit(area, 8.0, 0.5)
+		var cell: float = fitted["cell"]
+		assert_true(Rect2(Vector2.ZERO, area).grow(-8.0).encloses(fitted["full_rect"]), "%s: everything fits with its margin" % str(area))
+		assert_true((fitted["frame_rect"] as Rect2).encloses(fitted["board_rect"]))
+		assert_almost_eq((fitted["frame_rect"] as Rect2).size.x, (10.0 + 1.0) * cell, 0.001)
+		assert_almost_eq((fitted["board_rect"] as Rect2).position.x - (fitted["frame_rect"] as Rect2).position.x, 0.5 * cell, 0.001)
+		assert_lt((fitted["frame_rect"] as Rect2).end.y, layout.center(0, cell, fitted["origin"]).y - cell * 0.5 + 0.001, "the frame ends above the start strip")
+		assert_eq(cell, floorf(cell))
+
+
+func test_aspect_matches_what_fit_lays_out() -> void:
+	var layout: ClimbBoardLayout = ClimbBoardLayout.new(100, 10, 0.6)
+	var fitted: Dictionary = layout.fit(Vector2(2000, 1000), 0.0, 0.5)
+	var full: Rect2 = fitted["full_rect"]
+	assert_almost_eq(full.size.x / full.size.y, layout.aspect(0.5), 0.0001)

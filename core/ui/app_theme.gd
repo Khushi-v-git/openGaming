@@ -26,17 +26,13 @@ static func build() -> Theme:
 	theme.set_color("font_color", "Label", Tokens.INK)
 	theme.set_font_size("font_size", "Label", Tokens.FONT_SIZE)
 
-	var button_colors: Dictionary = {
-		"normal": Tokens.DEEP_TEAL,
-		"hover": Tokens.DEEP_TEAL.lightened(0.12),
-		"pressed": Tokens.DEEP_TEAL.darkened(0.15),
-		"disabled": Tokens.DEEP_TEAL.lerp(Tokens.PAPER_CREAM, 0.6),
-	}
-	for state: String in button_colors:
-		theme.set_stylebox(state, "Button", _paper(button_colors[state], state != "pressed"))
-	theme.set_stylebox("focus", "Button", StyleBoxEmpty.new())
-	for color_name: String in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_disabled_color"]:
-		theme.set_color(color_name, "Button", Tokens.PAPER_CREAM)
+	# Buttons are pills with a hard shadow underneath that flattens when pressed (like the design).
+	# Variations: "PrimaryButton" (terracotta, the one main action) and "CreamButton" (quiet).
+	_pill_button(theme, "Button", Tokens.DEEP_TEAL, Tokens.PAPER_CREAM)
+	theme.set_type_variation("PrimaryButton", "Button")
+	_pill_button(theme, "PrimaryButton", Tokens.TERRACOTTA, Tokens.PAPER_CREAM)
+	theme.set_type_variation("CreamButton", "Button")
+	_pill_button(theme, "CreamButton", Tokens.PAPER_CREAM.darkened(0.07), Tokens.INK)
 
 	var field: StyleBoxFlat = _paper(Tokens.PAPER_CREAM.darkened(0.06), false)
 	field.content_margin_left = Tokens.SPACE_M
@@ -67,6 +63,33 @@ static func build() -> Theme:
 	theme.set_constant("separation", "VBoxContainer", Tokens.SPACE_M)
 	theme.set_constant("separation", "HBoxContainer", Tokens.SPACE_S)
 	return theme
+
+
+static func _pill_button(theme: Theme, type_name: String, color: Color, text: Color) -> void:
+	var colors: Dictionary = {
+		"normal": color,
+		"hover": color.lightened(0.1),
+		"pressed": color.darkened(0.12),
+		"disabled": color.lerp(Tokens.PAPER_CREAM, 0.6) if color != Tokens.PAPER_CREAM else Tokens.PAPER_CREAM.darkened(0.08),
+	}
+	for state: String in colors:
+		var box: StyleBoxFlat = StyleBoxFlat.new()
+		box.bg_color = colors[state]
+		box.set_corner_radius_all(40)
+		box.content_margin_left = Tokens.SPACE_L
+		box.content_margin_right = Tokens.SPACE_L
+		var pressed: bool = state == "pressed"
+		box.content_margin_top = Tokens.SPACE_S + (3 if pressed else 0)
+		box.content_margin_bottom = Tokens.SPACE_S - (3 if pressed else 0)
+		if state != "disabled":
+			box.shadow_color = Color(Tokens.INK, 0.32)
+			box.shadow_size = 1
+			box.shadow_offset = Vector2(0, 2 if pressed else 5)
+		theme.set_stylebox(state, type_name, box)
+	theme.set_stylebox("focus", type_name, StyleBoxEmpty.new())
+	for color_name: String in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		theme.set_color(color_name, type_name, text)
+	theme.set_color("font_disabled_color", type_name, text.lerp(Tokens.PAPER_CREAM, 0.45) if text != Tokens.INK else Tokens.INK.lerp(Tokens.PAPER_CREAM, 0.5))
 
 
 static func _paper(color: Color, with_shadow: bool) -> StyleBoxFlat:

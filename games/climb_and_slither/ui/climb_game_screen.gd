@@ -17,8 +17,8 @@ var timeline: EventTimeline = EventTimeline.new()
 var board_view: ClimbBoardView
 var dice_view: ClimbDiceView
 var roll_button: Button
-var skip_button: Button
-var speed_picker: OptionButton
+var leaf_border: LeafBorder
+var side_card: PaperCard
 var menu_button: Button
 var banner: Label
 var overlay: Control
@@ -27,6 +27,7 @@ var rematch_button: Button
 var overlay_menu_button: Button
 var player_rows: Dictionary = {}  # player_id -> {panel, square}
 
+## Animation speed multiplier: always 1 in play. set_speed_by_label() exists for tests and tools.
 var speed: float = 1.0
 var names: Dictionary = {}
 var _player_ids: Array[String] = []
@@ -39,6 +40,8 @@ var _pending_setup: bool = false
 var _leave_dialog: ConfirmationDialog
 var _last_error: String = ""
 var _players_box: VBoxContainer
+var _margin: MarginContainer
+var _row: HBoxContainer
 
 
 func _ready() -> void:
@@ -80,22 +83,22 @@ func _build() -> void:
 	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(back)
+	leaf_border = LeafBorder.new()
+	add_child(leaf_border)
 
-	var margin: MarginContainer = MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, Tokens.SPACE_M)
-	add_child(margin)
-	var row: HBoxContainer = HBoxContainer.new()
-	row.add_theme_constant_override("separation", Tokens.SPACE_L)
-	margin.add_child(row)
+	_margin = MarginContainer.new()
+	_margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_margin)
+	_row = HBoxContainer.new()
+	_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_row.add_theme_constant_override("separation", Tokens.SPACE_L)
+	_margin.add_child(_row)
 
 	board_view = ClimbBoardView.new()
-	board_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	board_view.size_flags_stretch_ratio = 1.65
-	board_view.custom_minimum_size = Vector2(480, 400)
-	row.add_child(board_view)
+	board_view.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	board_view.custom_minimum_size = Vector2(320, 300)
+	_row.add_child(board_view)
 
 	banner = Label.new()
 	banner.visible = false
@@ -106,25 +109,31 @@ func _build() -> void:
 	banner_style.bg_color = Tokens.INDIGO
 	banner_style.set_corner_radius_all(Tokens.RADIUS)
 	banner_style.set_content_margin_all(Tokens.SPACE_M)
+	banner_style.shadow_color = Color(Tokens.INK, 0.3)
+	banner_style.shadow_size = 4
+	banner_style.shadow_offset = Vector2(2, 4)
 	banner.add_theme_stylebox_override("normal", banner_style)
 	banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	board_view.add_child(banner)
 
-	var side_panel: PanelContainer = PanelContainer.new()
-	side_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side_panel.size_flags_stretch_ratio = 1.0
-	side_panel.custom_minimum_size = Vector2(300, 0)
-	row.add_child(side_panel)
+	side_card = PaperCard.new()
+	side_card.back_color = Tokens.DEEP_TEAL
+	side_card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	side_card.custom_minimum_size = Vector2(250, 0)
+	_row.add_child(side_card)
 	var column: VBoxContainer = VBoxContainer.new()
-	side_panel.add_child(column)
+	column.add_theme_constant_override("separation", Tokens.SPACE_S)
+	side_card.add_child(column)
 
 	var title: Label = Label.new()
 	title.text = "Climb and Slither"
 	title.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
+	title.add_theme_color_override("font_color", Tokens.INDIGO)
 	column.add_child(title)
 
 	var players_box: VBoxContainer = VBoxContainer.new()
 	players_box.name = "Players"
+	players_box.add_theme_constant_override("separation", 4)
 	column.add_child(players_box)
 	_players_box = players_box
 
@@ -134,35 +143,14 @@ func _build() -> void:
 
 	roll_button = Button.new()
 	roll_button.text = "Roll"
-	roll_button.custom_minimum_size = Vector2(0, 56)
+	roll_button.theme_type_variation = "PrimaryButton"
+	roll_button.custom_minimum_size = Vector2(0, 52)
 	roll_button.pressed.connect(_on_roll_pressed)
 	column.add_child(roll_button)
 
-	skip_button = Button.new()
-	skip_button.text = "Skip animation"
-	skip_button.pressed.connect(_on_skip_pressed)
-	column.add_child(skip_button)
-
-	var speed_row: HBoxContainer = HBoxContainer.new()
-	var speed_label: Label = Label.new()
-	speed_label.text = "Speed"
-	speed_row.add_child(speed_label)
-	speed_picker = OptionButton.new()
-	var index: int = 0
-	for label: String in ClimbAnimationPlan.SPEEDS:
-		speed_picker.add_item(label, index)
-		if is_equal_approx(float(ClimbAnimationPlan.SPEEDS[label]), speed):
-			speed_picker.select(index)
-		index += 1
-	speed_picker.item_selected.connect(_on_speed_selected)
-	speed_row.add_child(speed_picker)
-	column.add_child(speed_row)
-
-	var spacer: Control = Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(spacer)
 	menu_button = Button.new()
 	menu_button.text = "Back to menu"
+	menu_button.theme_type_variation = "CreamButton"
 	menu_button.pressed.connect(_on_menu_pressed)
 	column.add_child(menu_button)
 
@@ -171,7 +159,25 @@ func _build() -> void:
 	_leave_dialog.dialog_text = "Leave this game? Its progress will be lost."
 	_leave_dialog.confirmed.connect(func() -> void: leave_requested.emit())
 	add_child(_leave_dialog)
+	resized.connect(_fit)
+	_fit()
 	_update_controls()
+
+
+## The board takes all the height it can and only the width it needs, and the side card sits right
+## next to it, so there is no empty room between them. The margin keeps content clear of the leaves.
+func _fit() -> void:
+	if _margin == null or board_view == null:
+		return
+	var short_side: float = minf(size.x, size.y)
+	var edge: int = roundi(clampf(short_side * 0.05, 20.0, 56.0))
+	for side: String in ["left", "right", "top", "bottom"]:
+		_margin.add_theme_constant_override("margin_" + side, edge)
+	var height: float = maxf(300.0, size.y - 2.0 * edge)
+	var layout: ClimbBoardLayout = board_view.layout if board_view.layout != null else ClimbBoardLayout.new(100, 10, ClimbBoardView.STRIP_GAP_CELLS)
+	var wanted: float = height * layout.aspect(ClimbBoardView.FRAME_CELLS) + 2.0 * ClimbBoardView.MARGIN
+	var room: float = size.x - 2.0 * edge - side_card.get_combined_minimum_size().x - float(Tokens.SPACE_L)
+	board_view.custom_minimum_size.x = clampf(wanted, 320.0, maxf(320.0, room))
 
 
 func _build_overlay() -> void:
@@ -179,17 +185,19 @@ func _build_overlay() -> void:
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.visible = false
 	var dim: ColorRect = ColorRect.new()
-	dim.color = Color(Tokens.INK, 0.45)
+	dim.color = Color(Tokens.INK, 0.5)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(dim)
 	var center: CenterContainer = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(center)
-	var panel: PanelContainer = PanelContainer.new()
-	center.add_child(panel)
+	var card: PaperCard = PaperCard.new()
+	card.back_color = Tokens.FOREST_GREEN
+	card.back_offset = Vector2(10, 12)
+	center.add_child(card)
 	var box: VBoxContainer = VBoxContainer.new()
 	box.custom_minimum_size = Vector2(340, 0)
-	panel.add_child(box)
+	card.add_child(box)
 	var crown: TextureRect = TextureRect.new()
 	crown.texture = load(ClimbArt.CROWN_PATH)
 	crown.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -199,9 +207,11 @@ func _build_overlay() -> void:
 	overlay_title = Label.new()
 	overlay_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	overlay_title.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
+	overlay_title.add_theme_color_override("font_color", Tokens.INDIGO)
 	box.add_child(overlay_title)
 	rematch_button = Button.new()
 	rematch_button.text = "Play again"
+	rematch_button.theme_type_variation = "PrimaryButton"
 	rematch_button.pressed.connect(_on_rematch_pressed)
 	box.add_child(rematch_button)
 	overlay_menu_button = Button.new()
@@ -291,6 +301,7 @@ func _show_view(view: Dictionary) -> void:
 func _ensure_board(view: Dictionary) -> void:
 	if board_view.board.is_empty() or board_view.board != view["board"] or _colors_changed(view):
 		board_view.setup(view["board"], view["players"], view["positions"])
+		_fit()
 
 
 func _colors_changed(view: Dictionary) -> bool:
@@ -359,7 +370,6 @@ func _update_controls() -> void:
 	var who: String = controller.rules().current_player(_view) if controller != null and not _view.is_empty() else ""
 	roll_button.disabled = not can_roll()
 	roll_button.text = "Roll for %s" % str(names.get(who, who)) if who != "" else "Roll"
-	skip_button.visible = controller != null and timeline.is_busy()
 
 
 func _update_overlay() -> void:
@@ -378,17 +388,9 @@ func _on_roll_pressed() -> void:
 		_update_controls()
 
 
-func _on_skip_pressed() -> void:
-	skip()
-
-
 ## Shows the true state now, dropping any animation that is playing.
 func skip() -> void:
 	timeline.skip()
-
-
-func _on_speed_selected(index: int) -> void:
-	set_speed_by_label(speed_picker.get_item_text(index))
 
 
 func set_speed_by_label(label: String) -> void:

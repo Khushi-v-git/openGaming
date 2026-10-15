@@ -44,11 +44,14 @@ func _build() -> void:
 	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(back)
+	add_child(LeafBorder.new())
 
 	_menu_root = CenterContainer.new()
 	_menu_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_menu_root)
-	var panel: PanelContainer = PanelContainer.new()
+	var panel: PaperCard = PaperCard.new()
+	panel.back_color = Tokens.DEEP_TEAL
+	panel.back_offset = Vector2(10, 12)
 	panel.custom_minimum_size = Vector2(520, 0)
 	_menu_root.add_child(panel)
 	var column: VBoxContainer = VBoxContainer.new()
@@ -57,6 +60,7 @@ func _build() -> void:
 	_title_label = Label.new()
 	_title_label.text = "onlyGaming"
 	_title_label.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE + 8)
+	_title_label.add_theme_color_override("font_color", Tokens.INDIGO)
 	column.add_child(_title_label)
 
 	game_list = VBoxContainer.new()
@@ -100,6 +104,7 @@ func _build_setup(box: VBoxContainer) -> void:
 	var start_button: Button = Button.new()
 	start_button.name = "StartButton"
 	start_button.text = "Start game"
+	start_button.theme_type_variation = "PrimaryButton"
 	start_button.pressed.connect(start_hotseat)
 	buttons.add_child(start_button)
 	box.add_child(buttons)

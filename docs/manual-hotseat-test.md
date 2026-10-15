@@ -38,16 +38,17 @@ Tick each line; write what you saw next to anything that is off.
 - [ ] The highlighted row and the button ("Roll for Ben") agree about whose turn it is.
 - [ ] Rolling tumbles the die, lands on a face, then the pawn hops square by square.
 - [ ] Landing on a ladder slides the pawn up, on a snake slides it down.
-- [ ] While things animate the Roll button is greyed and "Skip animation" shows. Clicking skip, or
-      pressing Space/Enter, jumps to the finished position. Space/Enter also rolls when it can.
-- [ ] Speed 0.5x / 1x / 2x / Instant change how fast it plays; Instant has no waiting at all.
+- [ ] While things animate the Roll button is greyed. Pressing Space or Enter jumps to the finished
+      position; Space/Enter also rolls when it can. There are no speed or skip buttons.
 - [ ] The square numbers in the player list match where the pawns actually are.
 - [ ] With "Roll again after a 6": a 6 shows "<name> rolls again" and the same player rolls again.
 - [ ] With "Exact finish": overshooting near the end shows "<name> needs exactly N" and the pawn shakes.
 - [ ] With "Two dice": two dice show; the pawn moves their total.
+- [ ] With "Need a 1 to start": a pawn stays at Start until its player rolls a 1; that roll hops the pawn onto
+      square 1, any other roll shows "<name> needs a 1 to start" and the turn passes.
 
 **Finishing**
-- [ ] The "<name> wins!" panel appears only after the last animation is done (use 0.5x to check).
+- [ ] The "<name> wins!" panel appears only after the last animation is done.
 - [ ] "Play again" starts a fresh game with the same players and settings (everyone back at Start,
       no old dice). "Back to menu" returns to the list.
 - [ ] Leaving mid-game via "Back to menu" asks first; leaving after the game is over does not.
