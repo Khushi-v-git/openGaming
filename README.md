@@ -5,6 +5,11 @@ one player hosts, the others join. First game: Climb and Slither (a Snakes and L
 
 See `CLAUDE.md` for how the project is built and `docs/` for guides.
 
+## Release checklist
+
+- [ ] Blank `onlygaming/network/relay_url` in `project.godot` before the repo goes public
+      (it is the one committed default relay URL; players can still set their own in app settings).
+
 ## Credits
 
 - **Fredoka** (text) — Copyright 2016 The Fredoka Project Authors, SIL Open Font License 1.1.
