@@ -75,6 +75,25 @@ docs/
    host broadcasts views, never raw state. Results are reproducible. Rules
    must be unit-testable with no window and no network.
 
+   Every game's rules class extends `GameRules` (core/game, itself a
+   RefCounted) and fulfils its contract, so core never needs to know which game
+   it runs: `new_game(player_ids, setup, settings, seed)` (`setup` is
+   game-specific start data such as a board; `default_setup()` supplies the
+   usual one), `apply(...)` as above,
+   `settle(state, active_players)` (hand the turn on when the current player
+   dropped; the base default does nothing), `view_for(state, player_id)`,
+   `validate_state(state)`, and three queries that work on a state or a view:
+   `is_finished`, `current_player` ("" when none) and `winner`. Results carry
+   `events`, an ordered list of plain dicts with a `type`, that tell a UI what
+   happened. Screens never call rules directly: they talk to a `GameController`
+   (`LocalGameController` for hot-seat, network controllers later; only the
+   host or hot-seat may `rematch()`), which hands
+   them batches `{seq, reason, events, view}`; `EventTimeline` plays a batch's
+   events one at a time and ends on the batch's view. `core/game` contains no
+   game-specific code (a test checks this against a tiny test-only game). A
+   game's `ui_scene` root has `setup(controller, players)` and a
+   `leave_requested` signal; an optional `settings_scene` has `settings()`.
+
 3. **Transport is an interface.** All networking goes through one small
    interface: `send(peer_id, message)`, `broadcast(message)`,
    `disconnect_peer(peer_id)`, `poll()` (the owner calls it every frame), and
