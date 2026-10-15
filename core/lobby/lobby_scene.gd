@@ -24,6 +24,15 @@ extends Control
 ##                               (timeouts, limits); tests use it to stretch timeouts
 
 signal game_started(state: Dictionary)
+## The lobby phase became in_game, on the host (after Start) or on a guest (the host started).
+## Exactly one of `host` / `client` is set. The owner builds the game on top of them.
+signal game_ready(host: LobbyHost, client: LobbyClient)
+## The session ended and the start view is showing again (code: LEFT, HOST_CLOSED, HOST_LOST, ...).
+signal session_over(code: String, message: String)
+## A valid player name was entered when hosting or joining (the app saves it).
+signal name_chosen(player_name: String)
+## The Back button on the start view was pressed.
+signal back_requested()
 
 var options: Dictionary = {}
 
@@ -37,6 +46,7 @@ var address_edit: LineEdit
 var host_button: Button
 var join_button: Button
 var rejoin_button: Button
+var back_button: Button
 var status_label: Label
 var start_view: Control
 var connecting_view: Control
@@ -44,7 +54,11 @@ var connecting_label: Label
 var cancel_button: Button
 var lobby_view: Control
 var address_label: Label
+var public_address_edit: LineEdit  # what the host shares; editable for a direct address
 var copy_button: Button
+var settings_box: VBoxContainer  # host only: the game's own house-rules panel
+var settings_panel: Node
+var house_rules_label: Label  # guests: the host's house rules, read-only
 var players_box: VBoxContainer
 var players_scroll: ScrollContainer  # the list scrolls when a big game does not fit the window
 var claims_box: VBoxContainer  # host only: returning players waiting to be let in
@@ -64,6 +78,7 @@ var share_label: String = "address"
 
 var _host: LobbyHost = null
 var _client: LobbyClient = null
+var _address_editable: bool = false
 var _transport_config: Dictionary = {}
 var _state: Dictionary = {}
 var _joining_address: String = ""
@@ -84,6 +99,27 @@ func _ready() -> void:
 	resized.connect(_update_layout)
 	_update_layout()
 	_show_start_view("")
+
+
+## The host's lobby (null on a guest), for the game layer built on top.
+func lobby_host() -> LobbyHost:
+	return _host
+
+
+## The guest's lobby client (null on the host).
+func lobby_client() -> LobbyClient:
+	return _client
+
+
+## Shows the lobby again after a game ended in the same session (nobody reconnects).
+func show_lobby_again() -> void:
+	visible = true
+	_show_lobby_view()
+
+
+## Puts a message on the lobby (for the game layer, e.g. "the game could not start").
+func show_status(text: String) -> void:
+	_set_lobby_status(text)
 
 
 func _process(_delta: float) -> void:
@@ -187,6 +223,10 @@ func _build_start_view() -> Control:
 	rejoin_button.text = "Rejoin the game you were in"
 	rejoin_button.pressed.connect(rejoin_session)
 	box.add_child(rejoin_button)
+	back_button = Button.new()
+	back_button.text = "Back"
+	back_button.pressed.connect(func() -> void: back_requested.emit())
+	box.add_child(back_button)
 
 	status_label = _label("")
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -221,12 +261,25 @@ func _build_lobby_view() -> Control:
 	address_label = _label("")
 	address_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	address_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	address_row.add_child(address_label)
+	box.add_child(address_label)
+	public_address_edit = LineEdit.new()
+	public_address_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	public_address_edit.text_submitted.connect(func(_text: String) -> void: _save_public_address())
+	public_address_edit.focus_exited.connect(_save_public_address)
+	address_row.add_child(public_address_edit)
 	copy_button = Button.new()
 	copy_button.text = "Copy"
-	copy_button.pressed.connect(func() -> void: DisplayServer.clipboard_set(shared_address))
+	copy_button.pressed.connect(func() -> void: DisplayServer.clipboard_set(public_address_edit.text))
 	address_row.add_child(copy_button)
 	box.add_child(address_row)
+
+	settings_box = VBoxContainer.new()
+	settings_box.visible = false
+	box.add_child(settings_box)
+	house_rules_label = _label("")
+	house_rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	house_rules_label.visible = false
+	box.add_child(house_rules_label)
 
 	players_box = VBoxContainer.new()
 	players_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -294,6 +347,7 @@ func host_session() -> void:
 	if game_id.is_empty():
 		status_label.text = "No game selected to host."
 		return
+	name_chosen.emit(cleaned["name"])
 	var limits: Dictionary = _player_limits(game_id)
 	var config: Dictionary = _transport_config.duplicate()
 	if port_spin != null:
@@ -327,6 +381,7 @@ func join_session() -> void:
 		status_label.text = "Paste the address or room code your host gave you."
 		return
 	_resume = {}
+	name_chosen.emit(cleaned["name"])
 	_begin_join(address_edit.text, cleaned["name"], {})
 
 
@@ -389,8 +444,11 @@ func _act(action: Dictionary) -> void:
 func _on_hosting(info: Dictionary) -> void:
 	shared_address = str(info["address"])
 	share_label = str(info.get("share_label", "address"))
+	_address_editable = bool(info.get("public_address_editable", false))
+	_use_game_settings_check()
 	_state = _host.state
 	_show_lobby_view()
+	_push_settings()  # guests must always see the house rules, even if the host never touches them
 
 
 func _on_host_failed(reason: String) -> void:
@@ -406,6 +464,7 @@ func _on_state_changed(state: Dictionary) -> void:
 func _on_game_started(state: Dictionary) -> void:
 	_set_lobby_status("Game starting...")
 	game_started.emit(state)
+	game_ready.emit(_host, _client)
 
 
 func _on_joined() -> void:
@@ -426,12 +485,15 @@ func _on_left(code: String, message: String) -> void:
 	if code == ErrorCodes.HOST_LOST and _client != null:
 		_resume = {"address": _joining_address, "name": _joining_name, "identity": _client.identity()}
 	_forget_client()
-	_show_start_view("" if code == ErrorCodes.LEFT else "Left the session: %s" % message)
+	var shown: String = "" if code == ErrorCodes.LEFT else "Left the session: %s" % message
+	_show_start_view(shown)
+	session_over.emit(code, shown)
 
 
 func _on_host_closed() -> void:
 	_host = null
 	_show_start_view("")
+	session_over.emit("HOST_CLOSED", "")
 
 
 ## Releases a host that never went live (or failed) without waiting for a goodbye.
@@ -482,7 +544,13 @@ func _render() -> void:
 	var my_id: String = _host.local_player_id if is_host else (_client.player_id if _client != null else "")
 	address_label.visible = is_host
 	copy_button.visible = is_host
-	address_label.text = "Share this %s: %s" % [share_label, shared_address]
+	public_address_edit.visible = is_host
+	var shown: String = _shown_address()
+	address_label.text = "Share this %s: %s" % [share_label, shown]
+	if not public_address_edit.has_focus():
+		public_address_edit.text = shown
+	public_address_edit.editable = _address_editable
+	_render_settings(is_host)
 	ready_button.visible = not is_host
 	start_button.visible = is_host and _state["phase"] == LobbyLogic.PHASE_OPEN
 	start_button.disabled = not LobbyLogic.ready_to_start(_state)
@@ -501,6 +569,72 @@ func _render() -> void:
 	if started:
 		start_button.disabled = true
 	_update_title()
+
+
+## What the host shares: the address the transport reports, or the one the host typed instead
+## (only for transports that allow it, i.e. a direct address).
+func _shown_address() -> String:
+	var typed: String = AppSettings.public_address()
+	return typed if _address_editable and not typed.is_empty() else shared_address
+
+
+func _save_public_address() -> void:
+	if not _address_editable or _host == null:
+		return
+	var typed: String = public_address_edit.text.strip_edges()
+	AppSettings.set_public_address("" if typed == shared_address else typed)
+	_render()
+
+
+## The host's house-rules panel (the game's own settings scene), or the guests' read-only summary.
+func _render_settings(is_host: bool) -> void:
+	settings_box.visible = false
+	house_rules_label.visible = false
+	var registry: GameRegistry = options.get("game_registry", null)
+	var game_id: String = str(options.get("game_id", ""))
+	if registry == null or game_id.is_empty() or not registry.has(game_id):
+		return
+	if is_host:
+		if settings_panel == null:
+			_build_settings_panel(registry, game_id)
+		settings_box.visible = settings_panel != null and _state["phase"] == LobbyLogic.PHASE_OPEN
+		return
+	var rules: GameRules = registry.create_rules(game_id) as GameRules
+	if rules == null:
+		return
+	var lines: Array = rules.describe_settings(_state.get("game_settings", {}))
+	house_rules_label.text = "House rules: %s" % ", ".join(lines)
+	house_rules_label.visible = not lines.is_empty()
+
+
+func _build_settings_panel(registry: GameRegistry, game_id: String) -> void:
+	var scene: PackedScene = registry.load_settings_scene(game_id)
+	if scene == null:
+		return
+	settings_panel = scene.instantiate()
+	settings_box.add_child(settings_panel)
+	if settings_panel.has_signal("changed"):
+		settings_panel.connect("changed", func(_settings: Dictionary) -> void: _push_settings())
+
+
+## Lets the lobby ask the game whether house rules are acceptable before it stores them (a game
+## host built later replaces this with its own, which asks the same rules).
+func _use_game_settings_check() -> void:
+	var registry: GameRegistry = options.get("game_registry", null)
+	var game_id: String = str(options.get("game_id", ""))
+	if registry == null or game_id.is_empty() or not registry.has(game_id) or _host == null:
+		return
+	var rules: GameRules = registry.create_rules(game_id) as GameRules
+	if rules != null:
+		_host.settings_validator = func(settings: Dictionary) -> Dictionary: return rules.validate_settings(settings)
+
+
+## Sends the panel's current settings to the lobby (the game checks them first; a refusal shows).
+func _push_settings() -> void:
+	if _host == null or settings_panel == null or not settings_panel.has_method("settings"):
+		return
+	var result: Dictionary = _host.act({"type": "set_game_settings", "settings": settings_panel.call("settings")})
+	_set_lobby_status("" if CoreResult.is_ok(result) else str(result["error"]["message"]))
 
 
 ## Returning players asking the host to let them back in.

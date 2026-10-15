@@ -11,6 +11,7 @@ func _menu() -> MainMenu:
 	viewport.size = Vector2i(1280, 720)
 	add_child_autofree(viewport)
 	var menu: MainMenu = MainMenu.new()
+	menu.use_command_line = false
 	viewport.add_child(menu)
 	await get_tree().process_frame
 	return menu
@@ -19,11 +20,20 @@ func _menu() -> MainMenu:
 func test_the_game_list_comes_from_the_registry() -> void:
 	var menu: MainMenu = await _menu()
 	var ids: Array = []
-	for button: Node in menu.game_list.get_children():
-		ids.append(button.get_meta("game_id"))
+	for card: Node in menu.game_list.get_children():
+		ids.append(card.get_meta("game_id"))
 	assert_true(ids.has("climb_and_slither"))
 	assert_eq(ids.size(), menu.registry.playable().size())
-	assert_string_contains((menu.game_list.get_child(0) as Button).text, "Climb and Slither")
+	assert_eq((menu.game_list.get_child(0).get_node("Title") as Label).text, "Climb and Slither")
+
+
+func test_each_game_card_offers_host_join_and_hot_seat() -> void:
+	var menu: MainMenu = await _menu()
+	var card: Node = menu.game_list.get_child(0)
+	assert_eq((card.find_child("HostButton", true, false) as Button).text, "Host game")
+	assert_eq((card.find_child("JoinGameButton", true, false) as Button).text, "Join game")
+	assert_eq((card.find_child("HotseatButton", true, false) as Button).text, "Play on this computer")
+	assert_eq(menu.join_button.text, "Join game", "and a top-level Join that works whichever game the host runs")
 
 
 func test_choosing_a_game_shows_its_player_count_names_and_settings() -> void:

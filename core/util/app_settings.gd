@@ -10,6 +10,7 @@ extends RefCounted
 const SECTION_NETWORK: String = "network"
 const KEY_RELAY_URL: String = "relay_url"
 const KEY_HOST_VIA: String = "host_via"
+const KEY_PUBLIC_ADDRESS: String = "public_address"
 const PROJECT_RELAY_URL: String = "onlygaming/network/relay_url"
 
 const HOST_VIA_RELAY: String = "relay"
@@ -53,6 +54,25 @@ static func relay_url() -> String:
 
 static func set_relay_url(url: String) -> bool:
 	return set_value(SECTION_NETWORK, KEY_RELAY_URL, url.strip_edges())
+
+
+## The name this player used last time ("" if none yet).
+static func player_name() -> String:
+	return str(get_value("player", "name", ""))
+
+
+static func set_player_name(player_name: String) -> bool:
+	return set_value("player", "name", player_name.strip_edges())
+
+
+## The address the host shares instead of the one the app listens on (a DDNS name, a forwarded
+## port, a tunnel). "" means share the real one.
+static func public_address() -> String:
+	return str(get_value(SECTION_NETWORK, KEY_PUBLIC_ADDRESS, "")).strip_edges()
+
+
+static func set_public_address(address: String) -> bool:
+	return set_value(SECTION_NETWORK, KEY_PUBLIC_ADDRESS, address.strip_edges())
 
 
 ## How this player hosts: "relay" (a room code) or "direct" (an address).

@@ -1,17 +1,28 @@
 class_name MainMenu
 extends Control
-## The home screen: a list of games built from the registry, and a hot-seat setup screen
-## ("Play on this computer"). It knows no game by name: it reads manifests, asks the game's own
-## settings scene for settings, and hands the game's UI scene a controller.
+## The home screen: a card per game built from the registry (Host game, Join game, Play on this
+## computer), a top-level Join game, the hot-seat setup, and the glue from the lobby to a networked
+## game. It knows no game by name: it reads manifests, asks the game's own settings scene for
+## settings, and hands the game's UI scene a controller.
 ##
-## Hosting and joining over the network come later; this is the one-window path.
+## Networked play: the lobby scene (core/lobby) does hosting, joining and readying up. When it says
+## game_ready, this builds a GameHost (host) or GameClient (guest), a NetworkGameController, and the
+## game's UI scene on top of the still-running lobby. When the game ends the lobby comes back.
+## Command-line options (see LaunchOptions) can open the host or join lobby by themselves.
 
 signal game_started(game_id: String)
 
 const MAX_NAME_LENGTH: int = 20
 
 var registry: GameRegistry
+## Transport config for networked play. Empty = TransportFactory.network_config() when a lobby
+## opens (tests put a loopback transport here).
+var network_config: Dictionary = {}
+## Parsed command-line options (see LaunchOptions). Tests set them and turn use_command_line off.
+var launch_options: Dictionary = {}
+var use_command_line: bool = true
 var game_list: VBoxContainer
+var join_button: Button
 var setup_panel: Control
 var error_label: Label
 
@@ -25,10 +36,18 @@ var _menu_root: Control
 var _game_node: Control
 var _title_label: Label
 
+var _lobby: LobbyScene = null
+var _net: Dictionary = {}  # the running networked game: {screen, controller}
+var _game_host: GameHost = null  # one per hosted session, reused for every game in it
+var _game_client: GameClient = null  # one per joined session
+var _share_written: bool = false
+var _auto_join_pending: bool = false
+
 
 func _ready() -> void:
 	theme = AppTheme.build()
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var launch_error: String = _read_launch_options()
 	if registry == null:
 		registry = GameRegistry.new()
 		var loaded: Dictionary = registry.load_from()
@@ -36,6 +55,32 @@ func _ready() -> void:
 			push_error("Some games could not be loaded: %s" % str(loaded["errors"]))
 	_build()
 	show_game_list()
+	if not launch_error.is_empty():
+		_set_error(launch_error)
+	elif not launch_options.is_empty():
+		_apply_auto_launch()
+
+
+func _process(_delta: float) -> void:
+	if _lobby == null:
+		return
+	# --share_file: write the address once hosting is live
+	if not _share_written and launch_options.has("share_file") and _lobby.shared_address != "":
+		_share_written = true
+		var file: FileAccess = FileAccess.open(str(launch_options["share_file"]), FileAccess.WRITE)
+		if file != null:
+			file.store_string(_lobby.shared_address)
+			file.close()
+	# --join_from_file: wait for the host to publish its code
+	if _auto_join_pending and FileAccess.file_exists(str(launch_options.get("join_from_file", ""))):
+		var code: String = FileAccess.get_file_as_string(str(launch_options["join_from_file"])).strip_edges()
+		if not code.is_empty():
+			_auto_join_pending = false
+			_lobby.address_edit.text = code
+			_lobby.join_session()
+	# --auto_ready: a guest ticks "I'm ready" whenever the lobby asks for it
+	if launch_options.get("auto_ready", false) and _lobby.lobby_client() != null and _lobby.lobby_view.visible and _lobby.ready_button.visible and not _lobby.ready_button.disabled and not _lobby.ready_button.button_pressed:
+		_lobby.ready_button.button_pressed = true
 
 
 func _build() -> void:
@@ -62,6 +107,12 @@ func _build() -> void:
 	_title_label.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE + 8)
 	_title_label.add_theme_color_override("font_color", Tokens.INDIGO)
 	column.add_child(_title_label)
+
+	join_button = Button.new()
+	join_button.name = "JoinButton"
+	join_button.text = "Join game"
+	join_button.pressed.connect(open_join_lobby)
+	column.add_child(join_button)
 
 	game_list = VBoxContainer.new()
 	column.add_child(game_list)
@@ -110,24 +161,61 @@ func _build_setup(box: VBoxContainer) -> void:
 	box.add_child(buttons)
 
 
-## The playable games, one button each.
+## The playable games, one card each.
 func show_game_list() -> void:
 	_selected_id = ""
 	setup_panel.visible = false
 	game_list.visible = true
+	join_button.visible = true
+	_menu_root.visible = true
 	_set_error("")
 	for child: Node in game_list.get_children():
 		game_list.remove_child(child)
 		child.queue_free()
 	for manifest: Dictionary in registry.playable():
-		var button: Button = Button.new()
-		button.text = "%s\n%s" % [manifest["display_name"], manifest["description"]]
-		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.custom_minimum_size = Vector2(0, 72)
-		button.set_meta("game_id", manifest["id"])
-		button.pressed.connect(func() -> void: choose_game(manifest["id"]))
-		game_list.add_child(button)
+		game_list.add_child(_game_card(manifest))
 
+
+## One game: its name and description, and the three ways to play it.
+func _game_card(manifest: Dictionary) -> Control:
+	var card: VBoxContainer = VBoxContainer.new()
+	card.set_meta("game_id", manifest["id"])
+	var title: Label = Label.new()
+	title.name = "Title"
+	title.text = str(manifest["display_name"])
+	title.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
+	title.add_theme_color_override("font_color", Tokens.INDIGO)
+	card.add_child(title)
+	var description: Label = Label.new()
+	description.name = "Description"
+	description.text = str(manifest["description"])
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.add_child(description)
+	var row: HBoxContainer = HBoxContainer.new()
+	var host_button: Button = _pill("HostButton", "Host game", "PrimaryButton")
+	host_button.pressed.connect(func() -> void: open_host_lobby(manifest["id"]))
+	row.add_child(host_button)
+	var join: Button = _pill("JoinGameButton", "Join game", "")
+	join.pressed.connect(open_join_lobby)
+	row.add_child(join)
+	var hotseat: Button = _pill("HotseatButton", "Play on this computer", "CreamButton")
+	hotseat.pressed.connect(func() -> void: choose_game(manifest["id"]))
+	row.add_child(hotseat)
+	card.add_child(row)
+	return card
+
+
+func _pill(button_name: String, text: String, variation: String) -> Button:
+	var button: Button = Button.new()
+	button.name = button_name
+	button.text = text
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if not variation.is_empty():
+		button.theme_type_variation = variation
+	return button
+
+
+# --- hot-seat ----------------------------------------------------------------------------------------
 
 ## Opens the "play on this computer" setup for a game.
 func choose_game(game_id: String) -> void:
@@ -136,6 +224,7 @@ func choose_game(game_id: String) -> void:
 	_selected_id = game_id
 	var manifest: Dictionary = registry.get_manifest(game_id)
 	game_list.visible = false
+	join_button.visible = false
 	setup_panel.visible = true
 	_set_error("")
 	(setup_panel.get_node("Heading") as Label).text = "%s: play on this computer" % manifest["display_name"]
@@ -243,6 +332,196 @@ func _on_leave_requested() -> void:
 		_game_node = null
 	_menu_root.visible = true
 	show_game_list()
+
+
+# --- networked play: the lobby ---------------------------------------------------------------------------
+
+## Opens the lobby to host `game_id`.
+func open_host_lobby(game_id: String) -> LobbyScene:
+	if not registry.has_ui(game_id):
+		return null
+	return _open_lobby(game_id)
+
+
+## Opens the lobby to join a game: whichever game the host runs.
+func open_join_lobby() -> LobbyScene:
+	return _open_lobby("")
+
+
+func lobby() -> LobbyScene:
+	return _lobby
+
+
+## True while a networked game's screen is up.
+func in_network_game() -> bool:
+	return not _net.is_empty()
+
+
+func network_screen() -> Control:
+	return _net.get("screen", null)
+
+
+func _open_lobby(game_id: String) -> LobbyScene:
+	_dispose_lobby()
+	var config: Dictionary = network_config.duplicate() if not network_config.is_empty() else TransportFactory.network_config()
+	if launch_options.has("port"):
+		config["port"] = int(launch_options["port"])
+	var scene: LobbyScene = LobbyScene.new()
+	scene.setup({
+		"app_version": AppInfo.app_version(),
+		"game_id": game_id,
+		"game_registry": registry,
+		"transport": config,
+		"player_name": str(launch_options.get("name", AppSettings.player_name())),
+	})
+	scene.name_chosen.connect(func(player_name: String) -> void: AppSettings.set_player_name(player_name))
+	scene.back_requested.connect(func() -> void: _go_home(""))
+	scene.game_ready.connect(_on_game_ready)
+	scene.session_over.connect(_on_session_over)
+	_lobby = scene
+	_share_written = false
+	_menu_root.visible = false
+	add_child(scene)
+	return scene
+
+
+## Frees the lobby (and the game objects that hang on it).
+func _dispose_lobby() -> void:
+	_teardown_game_screen()
+	_game_host = null
+	_game_client = null
+	if _lobby != null:
+		var old: LobbyScene = _lobby
+		_lobby = null
+		old.visible = false
+		if old.get_parent() != null:
+			old.get_parent().remove_child(old)
+		old.queue_free()
+
+
+func _go_home(message: String) -> void:
+	_dispose_lobby()
+	_auto_join_pending = false
+	show_game_list()
+	if not message.is_empty():
+		_set_error(message)
+
+
+## The lobby says the game starts: build the game on top of it.
+func _on_game_ready(host: LobbyHost, client: LobbyClient) -> void:
+	if _lobby == null or not _net.is_empty():
+		return
+	var state: Dictionary = host.state if host != null else client.state
+	var game_id: String = str(state.get("game_id", ""))
+	var rules: GameRules = registry.create_rules(game_id) as GameRules
+	var scene: PackedScene = registry.load_ui_scene(game_id)
+	if rules == null or scene == null:
+		_lobby.show_status("This app cannot play \"%s\"." % game_id)
+		if host != null:
+			host.act({"type": "end_game"})
+		return
+	var controller: NetworkGameController
+	if host != null:
+		if _game_host == null or _game_host.lobby != host:
+			_game_host = GameHost.new(host, rules, rules.default_setup(), randi())
+		controller = NetworkGameController.for_host(_game_host)
+	else:
+		if _game_client == null or _game_client.lobby != client:
+			_game_client = GameClient.new(client)
+		controller = NetworkGameController.for_client(_game_client, rules)
+	var screen: Control = scene.instantiate()
+	add_child(screen)
+	screen.setup(controller, controller.players())
+	_net = {"screen": screen, "controller": controller}
+	_lobby.visible = false
+	screen.leave_requested.connect(_on_network_leave)
+	controller.ended.connect(_on_network_game_ended)
+	if screen.has_signal("game_ended"):
+		screen.connect("game_ended", _on_network_game_ended)
+	if host != null:
+		var started: Dictionary = _game_host.start()
+		if not CoreResult.is_ok(started):
+			_teardown_game_screen()
+			_lobby.visible = true
+			_lobby.show_status(str(started["error"]["message"]))
+			host.act({"type": "end_game"})
+			return
+	game_started.emit(game_id)
+
+
+## The host sent everyone back to the lobby.
+func _on_network_game_ended() -> void:
+	if _net.is_empty():
+		return
+	_teardown_game_screen()
+	if _lobby != null:
+		_lobby.show_lobby_again()
+
+
+func _on_network_leave() -> void:
+	_teardown_game_screen()
+	if _lobby == null:
+		_go_home("")
+		return
+	_lobby.visible = false
+	_lobby.leave()  # the lobby tells us (session_over) when the goodbye is done
+
+
+## The lobby session ended (we left, the host closed, we were removed, or the link was lost).
+func _on_session_over(code: String, message: String) -> void:
+	_teardown_game_screen()
+	if code == ErrorCodes.HOST_LOST and _lobby != null:
+		_lobby.visible = true  # its start view offers Rejoin
+		return
+	_go_home(message)
+
+
+func _teardown_game_screen() -> void:
+	if _net.is_empty():
+		return
+	var screen: Control = _net["screen"]
+	_net = {}
+	if screen != null and is_instance_valid(screen):
+		if screen.get_parent() != null:
+			screen.get_parent().remove_child(screen)
+		screen.queue_free()
+
+
+# --- command line ----------------------------------------------------------------------------------------------
+
+## Reads the options (from the process unless a test set them); "" or an error message.
+func _read_launch_options() -> String:
+	if use_command_line and launch_options.is_empty():
+		var parsed: Dictionary = LaunchOptions.parse(OS.get_cmdline_user_args())
+		if not CoreResult.is_ok(parsed):
+			return str(parsed["error"]["message"])
+		launch_options = parsed["options"]
+	if not launch_options.is_empty():
+		LaunchOptions.isolate_settings(launch_options)
+		LaunchOptions.apply_to_settings(launch_options)
+	return ""
+
+
+## --auto=host / --auto=join open the right lobby and start it. The host still presses Start.
+func _apply_auto_launch() -> void:
+	var mode: String = str(launch_options.get("auto", ""))
+	if mode == "host":
+		var game_id: String = str(launch_options.get("game", ""))
+		if game_id.is_empty():
+			var playable: Array[Dictionary] = registry.playable()
+			game_id = str(playable[0]["id"]) if not playable.is_empty() else ""
+		var scene: LobbyScene = open_host_lobby(game_id)
+		if scene == null:
+			_set_error("Cannot host \"%s\"." % game_id)
+			return
+		scene.host_session()
+	elif mode == "join":
+		var scene: LobbyScene = open_join_lobby()
+		if launch_options.has("join"):
+			scene.address_edit.text = str(launch_options["join"])
+			scene.join_session()
+		else:
+			_auto_join_pending = true
 
 
 func _set_error(text: String) -> void:
