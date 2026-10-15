@@ -9,6 +9,8 @@ extends Control
 ## are [{player_id, name}] in seat order) and the signal `leave_requested`.
 
 signal leave_requested
+## The host sent everyone back to the lobby (networked games).
+signal game_ended
 
 const BANNER_FADE: float = 0.25
 
@@ -21,9 +23,12 @@ var leaf_border: LeafBorder
 var side_card: PaperCard
 var menu_button: Button
 var banner: Label
+var presence_overlay: PresenceOverlay
 var overlay: Control
 var overlay_title: Label
 var rematch_button: Button
+var lobby_button: Button
+var overlay_wait_label: Label
 var overlay_menu_button: Button
 var player_rows: Dictionary = {}  # player_id -> {panel, square}
 
@@ -154,6 +159,9 @@ func _build() -> void:
 	menu_button.pressed.connect(_on_menu_pressed)
 	column.add_child(menu_button)
 
+	presence_overlay = PresenceOverlay.new()
+	presence_overlay.leave_requested.connect(func() -> void: leave_requested.emit())
+	add_child(presence_overlay)
 	_build_overlay()
 	_leave_dialog = ConfirmationDialog.new()
 	_leave_dialog.dialog_text = "Leave this game? Its progress will be lost."
@@ -214,6 +222,14 @@ func _build_overlay() -> void:
 	rematch_button.theme_type_variation = "PrimaryButton"
 	rematch_button.pressed.connect(_on_rematch_pressed)
 	box.add_child(rematch_button)
+	lobby_button = Button.new()
+	lobby_button.text = "Back to lobby"
+	lobby_button.pressed.connect(func() -> void: controller.end_game())
+	box.add_child(lobby_button)
+	overlay_wait_label = Label.new()
+	overlay_wait_label.text = "Waiting for the host..."
+	overlay_wait_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(overlay_wait_label)
 	overlay_menu_button = Button.new()
 	overlay_menu_button.text = "Back to menu"
 	overlay_menu_button.pressed.connect(func() -> void: leave_requested.emit())
@@ -227,6 +243,9 @@ func _connect_controller() -> void:
 	_pending_setup = false
 	controller.batch_ready.connect(timeline.push)
 	controller.action_rejected.connect(_on_rejected)
+	controller.ended.connect(func() -> void: game_ended.emit())
+	controller.presence_changed.connect(func(_info: Dictionary) -> void: _update_controls())
+	presence_overlay.setup(controller)
 	timeline.event_started.connect(_on_event_started)
 	timeline.settled.connect(_on_settled)
 	timeline.snapped.connect(_on_snapped)
@@ -361,7 +380,12 @@ func _roll_dice(view: Dictionary) -> Array:
 
 ## True when the roll button should work: a game is on, nothing is animating, it is not over.
 func can_roll() -> bool:
-	return controller != null and not _view.is_empty() and not controller.rules().is_finished(_view) and not timeline.is_busy()
+	if controller == null or _view.is_empty() or controller.rules().is_finished(_view) or timeline.is_busy():
+		return false
+	if bool(controller.presence()["paused"]):
+		return false  # the host is waiting for someone
+	var me: String = controller.local_player_id()  # "" on a hot-seat computer: everyone plays here
+	return me == "" or me == controller.rules().current_player(_view)
 
 
 func _update_controls() -> void:
@@ -369,7 +393,13 @@ func _update_controls() -> void:
 		return
 	var who: String = controller.rules().current_player(_view) if controller != null and not _view.is_empty() else ""
 	roll_button.disabled = not can_roll()
-	roll_button.text = "Roll for %s" % str(names.get(who, who)) if who != "" else "Roll"
+	var me: String = controller.local_player_id() if controller != null else ""
+	if who == "":
+		roll_button.text = "Roll"
+	elif me == "" or me == who:
+		roll_button.text = "Roll for %s" % str(names.get(who, who)) if me == "" else "Your turn: roll"
+	else:
+		roll_button.text = "%s is rolling..." % str(names.get(who, who))
 
 
 func _update_overlay() -> void:
@@ -378,8 +408,14 @@ func _update_overlay() -> void:
 	if finished:
 		var winner: String = controller.rules().winner(_view)
 		overlay_title.text = "%s wins!" % str(names.get(winner, winner))
-		rematch_button.visible = controller.can_rematch()
-		rematch_button.grab_focus()
+		var hotseat: bool = controller.local_player_id() == ""
+		var is_host: bool = controller.can_rematch()
+		rematch_button.visible = is_host
+		lobby_button.visible = is_host and not hotseat
+		overlay_wait_label.visible = not hotseat and not is_host
+		overlay_menu_button.visible = hotseat
+		if is_host:
+			rematch_button.grab_focus()
 
 
 func _on_roll_pressed() -> void:

@@ -46,6 +46,20 @@ func validate_settings(settings: Dictionary) -> Dictionary:
 	return checked if not CoreResult.is_ok(checked) else CoreResult.success()
 
 
+## The house rules in words ("One die", "Exact finish", ...), the defaults filled in.
+func describe_settings(settings: Dictionary) -> Array:
+	var normalized: Dictionary = ClimbSettings.normalize(settings)
+	var chosen: Dictionary = normalized["settings"] if CoreResult.is_ok(normalized) else ClimbSettings.defaults()
+	var lines: Array = ["Two dice" if int(chosen["dice_count"]) == 2 else "One die"]
+	if chosen["exact_finish"]:
+		lines.append("Exact finish")
+	if chosen["extra_turn_on_six"]:
+		lines.append("Roll again after a 6")
+	if chosen.get("need_one_to_start", false):
+		lines.append("Need a 1 to start")
+	return lines
+
+
 ## The classic board from the data file.
 func default_setup() -> Dictionary:
 	var loaded: Dictionary = ClimbBoard.load_file()

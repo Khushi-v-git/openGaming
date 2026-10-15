@@ -60,10 +60,10 @@ func players() -> Array:
 	return []
 
 
-## {paused, away: [{player_id, name}], can_continue, is_host}. A game with everyone present is
+## {paused, away: [{player_id, name}], can_continue, is_host, min_active}. A game with everyone present is
 ## not paused. While paused the host refuses game actions (GAME_PAUSED).
 func presence() -> Dictionary:
-	return {"paused": false, "away": [], "can_continue": true, "is_host": true}
+	return {"paused": false, "away": [], "can_continue": true, "is_host": true, "min_active": 1}
 
 
 ## Host decisions while someone is away (rule 7). Only the host may; others get NOT_HOST.

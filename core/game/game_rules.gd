@@ -29,6 +29,17 @@ func validate_settings(_settings: Dictionary) -> Dictionary:
 	return CoreResult.success()
 
 
+## The house rules in words, one short line each, for a read-only summary (the lobby shows it to
+## guests). The default lists "key: value"; a game words its own.
+func describe_settings(settings: Dictionary) -> Array:
+	var lines: Array = []
+	var keys: Array = settings.keys()
+	keys.sort()
+	for key: Variant in keys:
+		lines.append("%s: %s" % [str(key), str(settings[key])])
+	return lines
+
+
 ## Starts a game. `player_ids` is the seat order. `setup` is game-specific data the game needs
 ## to begin (a board, a deck list, ...), `settings` the house rules, `seed_value` the seed for
 ## the game's Prng. Returns {ok, state, events} or a failure.

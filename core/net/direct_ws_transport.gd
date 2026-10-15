@@ -63,6 +63,7 @@ func host_session(config: Dictionary) -> Dictionary:
 	_ready_info = {
 		"address": "%s:%d" % [shown_host, bound_port],
 		"kind": "direct_ws",
+		"public_address_editable": true,  # the host may share a different address (DDNS, forwarded port)
 		"port": bound_port,
 		"lan_addresses": _local_ipv4_addresses(),
 	}

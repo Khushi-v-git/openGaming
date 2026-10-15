@@ -104,6 +104,7 @@ func presence() -> Dictionary:
 		"away": away,
 		"can_continue": lobby_state.is_empty() or LobbyLogic.can_continue(lobby_state),
 		"is_host": is_host(),
+		"min_active": LobbyLogic.min_active(lobby_state) if not lobby_state.is_empty() else 1,
 	}
 
 

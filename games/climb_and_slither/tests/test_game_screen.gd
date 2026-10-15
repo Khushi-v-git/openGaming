@@ -95,12 +95,12 @@ func test_the_roll_button_is_off_while_animations_play_and_back_after() -> void:
 func test_there_are_no_speed_or_skip_buttons_only_the_roll_and_menu_buttons() -> void:
 	var made: Array = await _screen()
 	var screen: ClimbGameScreen = made[0]
-	var allowed: Array = [screen.roll_button, screen.menu_button, screen.rematch_button, screen.overlay_menu_button]
+	var allowed: Array = [screen.roll_button, screen.menu_button, screen.rematch_button, screen.lobby_button, screen.overlay_menu_button]
 	for node: Node in screen.find_children("*", "Button", true, false):
 		var inside_dialog: bool = false
 		var up: Node = node.get_parent()
 		while up != null and up != screen:
-			inside_dialog = inside_dialog or up is ConfirmationDialog
+			inside_dialog = inside_dialog or up is ConfirmationDialog or up == screen.presence_overlay  # the pause card has its own buttons
 			up = up.get_parent()
 		if not inside_dialog:
 			assert_true(allowed.has(node), "unexpected button: %s" % (node as Button).text)
