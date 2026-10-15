@@ -52,6 +52,11 @@ docs/
   while a game is in development; the home screen lists only games that have
   one.
 - Shared art lives in core/assets/. Game-specific art stays in the game folder.
+- Adding a game follows `docs/adding-a-game.md` (decide, write the rules down,
+  design the state/actions/events/views, then rules, tests, network proof, UI,
+  manifest). A game needs no change to core/; several players acting at once
+  (trading, auctions) is accepted by the network layer but its UI convention
+  is not decided yet: ask before changing core for it.
 
 ## Architecture rules (do not violate)
 
