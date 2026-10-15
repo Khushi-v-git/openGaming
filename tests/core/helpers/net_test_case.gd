@@ -21,7 +21,7 @@ func before_each() -> void:
 	clock = FakeClock.new()
 	_pollers.clear()
 	_transports.clear()
-	MessageLog.enabled = false
+	MessageLog.enabled = not OS.get_environment("NET_TRACE").is_empty()  # NET_TRACE=1 prints every message
 	MessageLog.sink = Callable()
 
 

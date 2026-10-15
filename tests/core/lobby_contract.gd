@@ -58,11 +58,16 @@ func join_player(host: LobbyHostRig, player_name: String, identity: Dictionary =
 
 ## Waits until every client mirrors the host's current state revision.
 func converge(host: LobbyHostRig, clients: Array) -> bool:
-	return await pump(func() -> bool:
+	var settled: Callable = func() -> bool:
 		for c: LobbyClientRig in clients:
 			if c.client.state.is_empty() or c.client.state["revision"] != host.lobby.state["revision"]:
 				return false
-		return true)
+		return true
+	var ok: bool = await pump(settled)
+	if ok and env.settle_frames() > 0:
+		await frames(env.settle_frames())  # messages still in flight (real network latency)
+		ok = await pump(settled)
+	return ok
 
 
 func slot_names(state: Dictionary) -> Array[String]:

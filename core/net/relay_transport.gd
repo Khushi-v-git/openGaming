@@ -164,6 +164,9 @@ func leave() -> void:
 
 func send(peer_id: int, message: Dictionary) -> void:
 	var text: String = _encode(message)
+	if text.length() > Protocol.MAX_MESSAGE_BYTES / 4 and text.to_utf8_buffer().size() > Protocol.MAX_MESSAGE_BYTES:
+		push_warning("RelayTransport: dropped a message over %d bytes" % Protocol.MAX_MESSAGE_BYTES)
+		return  # the relay would cut the connection for it; the receiver would refuse it anyway
 	match _role:
 		Role.HOST:
 			if _peers.has(peer_id) and not _kicked.has(peer_id):
