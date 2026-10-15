@@ -42,6 +42,7 @@ var name_edit: LineEdit
 var port_spin: SpinBox
 var port_label: Label
 var connection_panel: ConnectionPanel  # only when the transport config asks for it
+var start_scroll: ScrollContainer  # the start view scrolls when a short window cannot show all of it
 var address_edit: LineEdit
 var host_button: Button
 var join_button: Button
@@ -170,13 +171,23 @@ func _build_ui() -> void:
 	root.add_theme_constant_override("separation", 8)
 	panel.add_child(root)
 
+	var title_row: HBoxContainer = HBoxContainer.new()
+	root.add_child(title_row)
 	title_label = Label.new()
 	title_label.add_theme_font_size_override("font_size", 44)
 	title_label.add_theme_color_override("font_color", Tokens.INDIGO)
-	root.add_child(title_label)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title_label)
 
 	start_view = _build_start_view()
-	root.add_child(start_view)
+	title_row.add_child(back_button)  # Back sits beside the title, so a scrolled start view never hides it
+	start_scroll = ScrollContainer.new()
+	start_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	start_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	start_scroll.add_child(start_view)
+	start_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	start_view.minimum_size_changed.connect(_fit_start_view)  # the scroll follows what the screen needs
+	root.add_child(start_scroll)
 	connecting_view = _build_connecting_view()
 	root.add_child(connecting_view)
 	lobby_view = _build_lobby_view()
@@ -204,6 +215,17 @@ func _update_layout() -> void:
 	var wanted: float = clampf(size.x * share, low, high)
 	panel.custom_minimum_size.x = minf(wanted, maxf(0.0, size.x - 2.0 * Tokens.SPACE_L))
 	_fit_players_list()
+	_fit_start_view()
+
+
+## The start screen takes the room it needs, but never more than the window offers: beyond that it
+## scrolls, so on a short window nothing is cut off at the top or the bottom of the card.
+func _fit_start_view() -> void:
+	if start_scroll == null or start_view == null:
+		return
+	var needed: float = start_view.get_combined_minimum_size().y
+	var room: float = maxf(160.0, size.y - 190.0)  # the title, the card's padding and the leaf margin
+	start_scroll.custom_minimum_size.y = minf(needed, room)
 
 
 ## The player list takes the room it needs, up to about 40% of the window height, and
@@ -217,11 +239,7 @@ func _fit_players_list() -> void:
 
 func _build_start_view() -> Control:
 	var box: VBoxContainer = VBoxContainer.new()
-	box.add_theme_constant_override("separation", 6)
-	var host_title: Label = _label("Host a game")
-	PaperStyle.title(host_title, 30)
-	box.add_child(host_title)
-	box.add_child(_caption("Your name"))
+	box.add_theme_constant_override("separation", 5)
 	name_edit = LineEdit.new()
 	name_edit.placeholder_text = "Your name"
 	name_edit.max_length = Handshake.MAX_NAME_LENGTH
@@ -255,7 +273,7 @@ func _build_start_view() -> Control:
 
 	box.add_child(PaperStyle.dashed_rule())
 	var join_title: Label = _label("Join a game")
-	PaperStyle.title(join_title, 30)
+	PaperStyle.title(join_title, 26)
 	box.add_child(join_title)
 	var join_row: HBoxContainer = HBoxContainer.new()
 	join_row.add_theme_constant_override("separation", 12)
@@ -263,6 +281,7 @@ func _build_start_view() -> Control:
 	address_edit.placeholder_text = "Address or room code from your host"
 	address_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	PaperStyle.inset_field(address_edit)
+	address_edit.text_changed.connect(func(_text: String) -> void: PaperStyle.mark_field_error(address_edit, false))
 	join_row.add_child(address_edit)
 	join_button = Button.new()
 	join_button.text = "Join"
@@ -281,14 +300,12 @@ func _build_start_view() -> Control:
 	status_label = _label("")
 	PaperStyle.error(status_label)
 	box.add_child(status_label)
-	var bottom: HBoxContainer = HBoxContainer.new()
 	back_button = Button.new()
 	back_button.text = "Back"
 	back_button.theme_type_variation = &"CreamButton"
-	back_button.custom_minimum_size.x = 150.0
+	back_button.custom_minimum_size = Vector2(120.0, 44.0)
+	back_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	back_button.pressed.connect(func() -> void: back_requested.emit())
-	bottom.add_child(back_button)
-	box.add_child(bottom)
 	return box
 
 
@@ -623,6 +640,7 @@ func _begin_join(address: String, player_name: String, identity: Dictionary) -> 
 	_client.left.connect(_on_left)
 	_joining_address = address
 	_joining_name = player_name
+	PaperStyle.mark_field_error(address_edit, false)
 	_show_connecting("Connecting to %s..." % address.strip_edges())
 	_client.join(address, player_name, config, identity)
 
@@ -674,6 +692,7 @@ func _on_join_failed(code: String, message: String, _host_info: Dictionary) -> v
 		_resume = {}  # the host answered and said no; retrying with the same identity won't help
 	_forget_client()
 	_show_start_view("Could not join: %s" % message)
+	PaperStyle.mark_field_error(address_edit, true)
 
 
 func _on_left(code: String, message: String) -> void:
@@ -707,16 +726,34 @@ func _forget_client() -> void:
 
 func _show_start_view(message: String) -> void:
 	start_view.visible = true
+	start_scroll.visible = true
+	back_button.visible = true
 	connecting_view.visible = false
 	lobby_view.visible = false
 	rejoin_button.visible = not _resume.is_empty()
 	status_label.text = message
 	_look(Tokens.ROSE if not message.is_empty() else Tokens.DEEP_TEAL)
 	_update_title()
+	_update_layout()
+	if not message.is_empty():
+		_show_the_bottom.call_deferred()  # a message sits at the bottom: make sure it is in view
+
+
+func _show_the_bottom() -> void:
+	if is_inside_tree() and not get_tree().process_frame.is_connected(_scroll_to_status):
+		# next frame, once the new text has changed the size (a signal connection ends with the node)
+		get_tree().process_frame.connect(_scroll_to_status, CONNECT_ONE_SHOT)
+
+
+func _scroll_to_status() -> void:
+	if start_scroll != null and start_scroll.is_visible_in_tree():
+		start_scroll.ensure_control_visible(status_label)
 
 
 func _show_connecting(message: String) -> void:
 	start_view.visible = false
+	start_scroll.visible = false
+	back_button.visible = false
 	connecting_view.visible = true
 	lobby_view.visible = false
 	connecting_label.text = message
@@ -725,6 +762,8 @@ func _show_connecting(message: String) -> void:
 
 func _show_lobby_view() -> void:
 	start_view.visible = false
+	start_scroll.visible = false
+	back_button.visible = false
 	connecting_view.visible = false
 	lobby_view.visible = true
 	_look(Tokens.ROSE)
@@ -824,7 +863,7 @@ func _render_bottom_caption(is_host: bool, open: bool) -> void:
 ## A relay room code is shown big and spaced out and cannot be edited; a direct address is a
 ## normal field.
 func _style_share_field() -> void:
-	var big: bool = not _address_editable
+	var big: bool = not _address_editable and _shown_address().length() <= 8  # a room code, not a long address
 	if big:
 		var spaced: FontVariation = FontVariation.new()
 		spaced.base_font = AppTheme.build_font()
@@ -839,7 +878,7 @@ func _style_share_field() -> void:
 		public_address_edit.remove_theme_font_override("font")
 		public_address_edit.add_theme_font_size_override("font_size", 22)
 		public_address_edit.remove_theme_color_override("font_color")
-		public_address_edit.remove_theme_color_override("font_uneditable_color")
+		public_address_edit.add_theme_color_override("font_uneditable_color", Tokens.INK)  # readable when not editable
 		public_address_edit.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		public_address_edit.custom_minimum_size.y = 48.0
 
@@ -875,10 +914,10 @@ func _render_settings(is_host: bool) -> void:
 		game_id = str(_state.get("game_id", ""))  # a guest learns the game from the host
 	if registry == null or game_id.is_empty() or not registry.has(game_id):
 		return
-	if is_host:
+	if is_host and _state["phase"] == LobbyLogic.PHASE_OPEN:
 		if settings_panel == null:
 			_build_settings_panel(registry, game_id)
-		settings_box.visible = settings_panel != null and _state["phase"] == LobbyLogic.PHASE_OPEN
+		settings_box.visible = settings_panel != null
 		return
 	var rules: GameRules = registry.create_rules(game_id) as GameRules
 	if rules == null:

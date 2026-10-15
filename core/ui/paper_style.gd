@@ -60,6 +60,18 @@ static func inset_field(field: LineEdit, font_size: int = 20) -> void:
 	field.custom_minimum_size.y = 40.0
 
 
+## Marks a text field as having a problem (a rose edge all round) or clears the mark again.
+static func mark_field_error(field: LineEdit, on: bool) -> void:
+	if not on:
+		inset_field(field, field.get_theme_font_size("font_size"))
+		return
+	var well: StyleBoxFlat = inset_box()
+	well.set_border_width_all(3)
+	well.border_color = Tokens.ROSE
+	for state: String in ["normal", "focus", "read_only"]:
+		field.add_theme_stylebox_override(state, well)
+
+
 static func inset_box(radius: int = 18) -> StyleBoxFlat:
 	var box: StyleBoxFlat = _box(Tokens.PAPER_CREAM.darkened(0.06), radius, 16, 8)
 	box.border_width_top = 3

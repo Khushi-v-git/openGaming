@@ -33,7 +33,7 @@ func test_each_game_card_offers_host_join_and_hot_seat() -> void:
 	assert_eq((card.find_child("HostButton", true, false) as Button).text, "Host game")
 	assert_eq((card.find_child("JoinGameButton", true, false) as Button).text, "Join game")
 	assert_eq((card.find_child("HotseatButton", true, false) as Button).text, "Play on this computer")
-	assert_eq(menu.join_button.text, "Join game", "and a top-level Join that works whichever game the host runs")
+	assert_eq(menu.join_button.text, "Join with a room code", "and a top-level Join that works whichever game the host runs")
 
 
 func test_choosing_a_game_shows_its_player_count_names_and_settings() -> void:
@@ -187,3 +187,23 @@ func test_the_home_screen_fits_a_1280_by_720_window() -> void:
 	await get_tree().process_frame
 	var card: Control = menu.setup_panel
 	assert_lte(card.size.y, 720.0, "the hot-seat setup with four players fits too")
+
+
+# --- the home screen's wording -------------------------------------------------------------------------------
+
+func test_the_card_says_the_player_count_once_and_the_bottom_join_says_what_it_is_for() -> void:
+	var menu: MainMenu = await _menu()
+	var card: Node = menu.game_list.get_child(0)
+	var description: Label = card.find_child("Description", true, false) as Label
+	assert_not_null(description)
+	assert_false(description.text.contains("players"), "the player count is on the card's own line")
+	assert_eq(menu.join_button.text, "Join with a room code")
+	assert_string_contains(menu.join_button.tooltip_text, "room code")
+
+
+func test_the_home_screen_buttons_fit_inside_a_720p_window() -> void:
+	var menu: MainMenu = await _menu()
+	await get_tree().process_frame
+	var window: Rect2 = Rect2(Vector2.ZERO, Vector2(1280, 720))
+	for button: Button in [menu.join_button, menu.quit_button]:
+		assert_true(window.encloses(button.get_global_rect()), "%s is inside the window" % button.text)

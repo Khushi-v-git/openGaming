@@ -135,8 +135,9 @@ func _build() -> void:
 	column.add_child(bottom)
 	join_button = Button.new()
 	join_button.name = "JoinButton"
-	join_button.text = "Join game"
-	join_button.custom_minimum_size = Vector2(220, 0)
+	join_button.text = "Join with a room code"
+	join_button.tooltip_text = "Join a game by typing the room code or address your host gave you."
+	join_button.custom_minimum_size = Vector2(300, 0)
 	join_button.pressed.connect(open_join_lobby)
 	bottom.add_child(join_button)
 	quit_button = Button.new()
