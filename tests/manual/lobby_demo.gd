@@ -12,6 +12,9 @@ const GAME_ID: String = "manual_test"
 
 func _ready() -> void:
 	var args: Dictionary = _parse_args(OS.get_cmdline_user_args())
+	if args.has("relay_url") or str(args.get("transport", "")) == "auto":
+		# the demo must not overwrite the player's real saved relay choice with a local one
+		AppSettings.path = "user://lobby_demo_settings_%s.cfg" % str(args.get("name", "demo")).validate_filename()
 	var transport: Dictionary = TransportFactory.default_config()
 	if str(args.get("transport", "")) == "auto" or args.has("relay_url"):
 		transport = TransportFactory.network_config()

@@ -31,6 +31,8 @@ var options: Dictionary = {}
 var title_label: Label
 var name_edit: LineEdit
 var port_spin: SpinBox
+var port_label: Label
+var connection_panel: ConnectionPanel  # only when the transport config asks for it
 var address_edit: LineEdit
 var host_button: Button
 var join_button: Button
@@ -147,9 +149,15 @@ func _build_start_view() -> Control:
 	box.add_child(name_edit)
 
 	box.add_child(_label("Host a game"))
+	if _transport_config.get("connection_ui", false):
+		connection_panel = ConnectionPanel.new()
+		connection_panel.initial_url = str(_transport_config.get("relay_url", ""))
+		connection_panel.host_via_changed.connect(func(_via: String) -> void: _update_port_visibility())
+		box.add_child(connection_panel)
 	var host_row: HBoxContainer = HBoxContainer.new()
 	if _transport_config.has("port"):  # only transports that listen on a port show this
-		host_row.add_child(_label("Port"))
+		port_label = _label("Port")
+		host_row.add_child(port_label)
 		port_spin = SpinBox.new()
 		port_spin.min_value = 1
 		port_spin.max_value = 65535
@@ -174,6 +182,7 @@ func _build_start_view() -> Control:
 	join_row.add_child(join_button)
 	box.add_child(join_row)
 
+	_update_port_visibility()
 	rejoin_button = Button.new()
 	rejoin_button.text = "Rejoin the game you were in"
 	rejoin_button.pressed.connect(rejoin_session)
@@ -183,6 +192,15 @@ func _build_start_view() -> Control:
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(status_label)
 	return box
+
+
+## The port only matters when hosting by direct address.
+func _update_port_visibility() -> void:
+	if port_spin == null:
+		return
+	var show_port: bool = connection_panel == null or not connection_panel.uses_relay()
+	port_spin.visible = show_port
+	port_label.visible = show_port
 
 
 func _build_connecting_view() -> Control:
@@ -280,6 +298,9 @@ func host_session() -> void:
 	var config: Dictionary = _transport_config.duplicate()
 	if port_spin != null:
 		config["port"] = int(port_spin.value)
+	if connection_panel != null and not connection_panel.apply_to(config):
+		status_label.text = connection_panel.result_label.text
+		return
 	_host = LobbyHost.new(TransportFactory.create(config), str(options["app_version"]), game_id, cleaned["name"], limits["min"], limits["max"], options.get("session_options", {}), limits["min_active"])
 	_host.hosting.connect(_on_hosting)
 	_host.host_failed.connect(_on_host_failed)
@@ -336,6 +357,8 @@ func leave() -> void:
 
 func _begin_join(address: String, player_name: String, identity: Dictionary) -> void:
 	var config: Dictionary = _transport_config.duplicate()
+	if connection_panel != null:
+		connection_panel.apply_for_joining(config)
 	_client = LobbyClient.new(TransportFactory.create(config), str(options["app_version"]), str(options.get("join_game_id", "")), options.get("session_options", {}))
 	var registry: GameRegistry = options.get("game_registry", null)
 	if registry != null:

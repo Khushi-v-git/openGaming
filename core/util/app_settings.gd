@@ -63,3 +63,43 @@ static func host_via() -> String:
 
 static func set_host_via(value: String) -> bool:
 	return set_value(SECTION_NETWORK, KEY_HOST_VIA, HOST_VIA_DIRECT if value == HOST_VIA_DIRECT else HOST_VIA_RELAY)
+
+
+## What a player typed into a relay address box, made into a URL the transport accepts, or ""
+## if it cannot be one. Friends paste whatever they were sent, so this is forgiving: a bare host
+## name gets wss://, https:// becomes wss://, http:// becomes ws://, and any path, query or
+## trailing slash is dropped.
+static func normalize_relay_url(text: String) -> String:
+	var typed: String = text.strip_edges()
+	if typed.is_empty() or typed.contains(" "):
+		return ""
+	var lower: String = typed.to_lower()
+	var scheme: String = "wss://"
+	var scheme_given: bool = true
+	var rest: String = typed
+	if lower.begins_with("wss://"):
+		rest = typed.substr(6)
+	elif lower.begins_with("ws://"):
+		scheme = "ws://"
+		rest = typed.substr(5)
+	elif lower.begins_with("https://"):
+		rest = typed.substr(8)
+	elif lower.begins_with("http://"):
+		scheme = "ws://"
+		rest = typed.substr(7)
+	elif typed.contains("://"):
+		return ""
+	else:
+		scheme_given = false
+	for stop: String in ["/", "?", "#"]:
+		var cut: int = rest.find(stop)
+		if cut >= 0:
+			rest = rest.substr(0, cut)
+	if rest.is_empty() or rest.begins_with(".") or rest.ends_with(".") or rest.begins_with(":"):
+		return ""
+	var host: String = rest.get_slice(":", 0)
+	if host.is_empty() or not (host.contains(".") or host == "localhost" or host.is_valid_ip_address()):
+		return ""
+	if not scheme_given and (host == "localhost" or host.is_valid_ip_address()):
+		scheme = "ws://"  # a bare local address is a dev relay on this network, not a TLS site
+	return scheme + rest

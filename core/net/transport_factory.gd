@@ -55,6 +55,7 @@ static func network_config() -> Dictionary:
 		"relay_url": AppSettings.relay_url(),
 		"port": DirectWsTransport.DEFAULT_PORT,
 		"bind_address": "*",
+		"connection_ui": true,  # the lobby shows the connection panel (relay address, host with)
 	}
 
 

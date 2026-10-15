@@ -116,6 +116,14 @@ either a room code or an address (a code is 6 letters/digits with no 0/O/1/I/L; 
 
 ## Settings
 
+**In the app:** the lobby's start screen has a Connection section with a relay address box, a
+"Host with" choice (room code or direct address) and a Test button that opens and closes a room on
+that relay and tells you if it works. Paste any relay's address, in any form (`name.workers.dev`,
+`https://...`, `wss://...`; a bare `localhost`/IP address means a local `ws://` relay). It is
+remembered for next time, so playing with a different group means pasting a different address
+once, never editing code. Joiners need the box filled too (the host tells them the address along
+with the room code) unless the build ships a default.
+
 The relay URL has one committed default: the project setting `onlygaming/network/relay_url` in
 `project.godot`. A player overrides it in `user://settings.cfg` (`[network] relay_url`, via `AppSettings`)
 without touching the repo. Blank the committed default before the repo goes public (README release
