@@ -43,12 +43,14 @@ export class Room extends DurableObject<Env> {
     super(ctx, env);
     this.limits = readLimits(env as unknown as Record<string, unknown>);
     if (env.DEBUG_LIFECYCLE === "1") console.log(`[room] constructed t=${Date.now()}`); // runs again after every hibernation
-    this.ctx.blockConcurrencyWhile(async () => {
-      this.sql.exec("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
-      this.sql.exec("CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, peer INTEGER NOT NULL, text TEXT NOT NULL)");
-    });
+    this.ctx.blockConcurrencyWhile(async () => this.ensureSchema());
     // Answered by the runtime without waking the object and without wall-clock time.
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE));
+  }
+
+  private ensureSchema(): void {
+    this.sql.exec("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, peer INTEGER NOT NULL, text TEXT NOT NULL)");
   }
 
   private get sql(): SqlStorage {
@@ -75,6 +77,7 @@ export class Room extends DurableObject<Env> {
 
   private async acceptHost(code: string): Promise<Response> {
     if (this.roomExists()) return fail("RELAY_BUSY", 409); // the code is taken: the Worker tries another
+    this.ensureSchema(); // a closed room's storage was deleted entirely
     const token = randomToken();
     const now = Date.now();
     this.setMeta("code", code);
@@ -130,6 +133,7 @@ export class Room extends DurableObject<Env> {
     if (typeof message !== "string") return this.drop(ws, "BAD_FRAME");
     if (message.length > this.limits.maxFrameChars) return this.drop(ws, "TOO_LARGE");
     if (att.role === "resume") return this.handleResume(ws, att, message);
+    if (att.kicked) return; // told to go: nothing more is forwarded
     if (!this.roomExists()) return;
     if (!this.allow(ws, att)) return;
     this.touch();
@@ -436,8 +440,13 @@ export class Room extends DurableObject<Env> {
   }
 
   private getMeta(key: string): string | null {
-    const rows = [...this.sql.exec<{ v: string }>("SELECT v FROM meta WHERE k = ?", key)];
-    return rows.length > 0 ? rows[0].v : null;
+    try {
+      const rows = [...this.sql.exec<{ v: string }>("SELECT v FROM meta WHERE k = ?", key)];
+      return rows.length > 0 ? rows[0].v : null;
+    } catch (error) {
+      if (String(error).includes("no such table")) return null; // the room was closed and its storage deleted
+      throw error;
+    }
   }
 
   private setMeta(key: string, value: string): void {
