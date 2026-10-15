@@ -17,7 +17,7 @@ join. Starting game: Climb and Slither (a Snakes and Ladders game).
 ## Repo layout
 ```
 core/                      shared code, used by every game
-  net/                     transport interface and implementations
+  net/                     transport interface and implementations (direct, relay client)
   lobby/                   host/join/ready, player slots
   session/                 handshake, reconnect, save/load
   ui/                      shared UI kit (themes, buttons, panels)
@@ -39,6 +39,9 @@ tests/
   main/                    tests for main/
 addons/
   gut/                     GUT test framework (approved addon)
+relay/
+  cloudflare/              the relay: a Cloudflare Worker + Durable Object (TypeScript, Node tests)
+tests_integration/         contract suites against a real local relay (scripts/run_integration_tests.sh)
 docs/
 ```
 - core/ must never import from games/ or main/.
@@ -102,8 +105,15 @@ docs/
    and hosting are asynchronous). On a client the
    host is always `HOST_PEER_ID`. Game and lobby code must never
    reference a concrete socket, IP address or Godot RPC. Implementations
-   (WebSocket/TCP for direct and tunnel use, a relay client later) are
-   interchangeable behind the interface.
+   (WebSocket/TCP for direct use, a relay client) are interchangeable behind
+   the interface. Two optional additions: the signal
+   `link_state_changed(state)` (`LINK_OK`, `LINK_HOST_AWAY`,
+   `LINK_RECONNECTING`) is a UI notice from transports whose link can degrade
+   without the session ending (a relay holding a room); sessions never depend
+   on it. And `keepalive_policy()` says whether the session layer should send
+   its own pings over this transport (a direct transport relies on them; a
+   relay must not carry them). In session options, 0 turns pings and the
+   silence timeouts off; explicit options win over the transport's policy.
 
 3a. **Relay-ready transport.** The transport interface is expressed as
     session operations, not socket operations:
@@ -125,6 +135,23 @@ docs/
     configuration, never by an import in game or lobby code. The host remains
     the single authority regardless of transport: a relay only forwards
     messages.
+
+    The relay (relay/cloudflare) is a dumb forwarder: no game logic, a one-byte
+    routing header, payloads are opaque text (the 64 KB cap applies to the
+    payload; the relay allows a little extra for its header). Its URL is
+    configuration: the project setting `onlygaming/network/relay_url`, which a
+    player can override in the app settings, and nowhere else. Relay
+    transports do not carry the session's app-level pings: each socket sends
+    its own cheap keepalive that the relay answers without waking up, and a
+    quiet link is declared dead after a configurable watchdog time. If the host
+    drops, the relay holds the room for a grace period so the host can resume
+    with its secret room key (kept in memory only); joiners get
+    `link_state_changed` meanwhile, and if the room expires they see the usual
+    host loss. A restarted host cannot resume: a resumed saved game opens a
+    new room with a new code and players rejoin it with their session tokens.
+    `session_ready`'s info may carry `share_label` ("address" or "room code")
+    so the lobby can name what it shows. The relay operator can read all
+    traffic, including rejoin tokens, and is trusted.
 
 4. **Messages are plain data.** Every message is a JSON-serializable dict with
    `type`, `protocol_version` and a payload. No engine objects or binary blobs.
@@ -184,12 +211,19 @@ docs/
 ## Networking and hosting model
 - Any player can host. Every copy of the app contains both host and client
   roles.
-- The host's app listens on a configurable port. Remote friends reach it
-  through a tunnel (playit.gg by default) or by LAN/IP. Joiners only paste an
-  address and a player name. Only the host does any network setup.
-- Start with direct address plus playit.gg. A cloud relay (e.g. Cloudflare
-  Workers + Durable Objects, WebSocket, room codes) may be added later as a
-  second transport. It must require no changes to game code.
+- In direct mode the host's app listens on a configurable port and friends
+  reach it by LAN/IP or through a tunnel they set up themselves. Joiners only
+  paste an address or room code and a player name. Only the host does any
+  network setup.
+- Play goes through a relay by default: the host gets a 6-character room code
+  and joiners type it, with nothing to forward or tunnel. The relay is a
+  Cloudflare Worker + Durable Objects on the free plan (relay/cloudflare);
+  anyone can deploy their own and put its URL in the app settings. Direct
+  address (LAN, IP, or a tunnel) stays supported and tested as the fallback
+  for when the relay is unreachable or its free quota is used up (anyone with
+  the relay's URL can use that quota; that is accepted and documented in
+  docs/relay.md). Only the maintainer of a relay needs a Cloudflare account;
+  players need none. The relay changes no game code.
 - The host needs a PC that stays on and awake. If the host leaves for good the
   game ends unless it was saved (see rule 8).
 - Closing and leaving are polite, two-step operations, because a close frame
@@ -266,9 +300,11 @@ docs/
 - Keep a replay format (seed plus list of actions) so any bug can be
   reproduced in a test.
 - A loopback test with a host and 3 simulated clients must pass before any
-  tunnel testing.
-- Test order: unit tests, hot-seat (one window), loopback, LAN, then a real
-  tunnel with a friend on another network.
+  network testing.
+- Test order: unit tests, hot-seat (one window), loopback, the integration
+  tier (contract suites on a real local relay), LAN, then the deployed relay
+  with a friend on another network. The integration tier skips cleanly when
+  Node or the relay's dependencies are missing.
 - Log every message sent and received (timestamp, player id, type) in debug
   builds.
 
@@ -289,6 +325,8 @@ docs/
 - Do not change the architecture rules above without asking. If a task seems
   to require breaking one, stop and explain.
 - Do not add dependencies, addons or services without asking.
+- Only stop processes you started yourself, tracked by PID. Never kill processes
+  by name or pattern, because the user may have their own game windows running.
 - Run the test suite before saying a task is done, and report what was run.
 - Prefer small, focused commits with clear messages.
 - Use typed GDScript (type hints on variables, parameters and returns).
