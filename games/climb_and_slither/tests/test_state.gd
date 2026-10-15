@@ -83,9 +83,9 @@ func test_a_bad_board_or_bad_settings_are_refused() -> void:
 
 func test_settings_given_to_new_game_live_in_the_state() -> void:
 	var state: Dictionary = _new(["p1", "p2"], {"exact_finish": true, "dice_count": 1})
-	assert_eq(state["settings"], {"exact_finish": true, "extra_turn_on_six": false, "dice_count": 1})
+	assert_eq(state["settings"], {"exact_finish": true, "extra_turn_on_six": false, "dice_count": 1, "need_one_to_start": false})
 	var two_dice: Dictionary = _new(["p1", "p2"], {"extra_turn_on_six": true, "dice_count": 2})
-	assert_eq(two_dice["settings"], {"exact_finish": false, "extra_turn_on_six": true, "dice_count": 2})
+	assert_eq(two_dice["settings"], {"exact_finish": false, "extra_turn_on_six": true, "dice_count": 2, "need_one_to_start": false})
 
 
 func test_new_game_refuses_exact_finish_with_two_dice() -> void:

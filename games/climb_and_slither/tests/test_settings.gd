@@ -2,7 +2,7 @@ extends GutTest
 
 
 func test_defaults_are_the_agreed_house_rules() -> void:
-	assert_eq(ClimbSettings.defaults(), {"exact_finish": false, "extra_turn_on_six": false, "dice_count": 1})
+	assert_eq(ClimbSettings.defaults(), {"exact_finish": false, "extra_turn_on_six": false, "dice_count": 1, "need_one_to_start": false})
 
 
 func test_no_settings_means_the_defaults() -> void:
@@ -13,15 +13,15 @@ func test_no_settings_means_the_defaults() -> void:
 
 func test_given_settings_override_the_defaults_and_the_rest_stay() -> void:
 	var r: Dictionary = ClimbSettings.normalize({"exact_finish": true})
-	assert_eq(r["settings"], {"exact_finish": true, "extra_turn_on_six": false, "dice_count": 1})
+	assert_eq(r["settings"], {"exact_finish": true, "extra_turn_on_six": false, "dice_count": 1, "need_one_to_start": false})
 	r = ClimbSettings.normalize({"extra_turn_on_six": true, "dice_count": 2})
-	assert_eq(r["settings"], {"exact_finish": false, "extra_turn_on_six": true, "dice_count": 2})
+	assert_eq(r["settings"], {"exact_finish": false, "extra_turn_on_six": true, "dice_count": 2, "need_one_to_start": false})
 
 
 func test_all_settings_at_once() -> void:
-	var all: Dictionary = {"exact_finish": true, "extra_turn_on_six": true, "dice_count": 1}
+	var all: Dictionary = {"exact_finish": true, "extra_turn_on_six": true, "dice_count": 1, "need_one_to_start": false}
 	assert_eq(ClimbSettings.normalize(all)["settings"], all)
-	var two_dice: Dictionary = {"exact_finish": false, "extra_turn_on_six": true, "dice_count": 2}
+	var two_dice: Dictionary = {"exact_finish": false, "extra_turn_on_six": true, "dice_count": 2, "need_one_to_start": false}
 	assert_eq(ClimbSettings.normalize(two_dice)["settings"], two_dice)
 
 
@@ -29,7 +29,7 @@ func test_exact_finish_with_two_dice_is_refused_because_it_can_never_end() -> vo
 	var r: Dictionary = ClimbSettings.normalize({"exact_finish": true, "dice_count": 2})
 	assert_eq(CoreResult.error_code(r), ClimbErrors.INVALID_SETTINGS)
 	assert_string_contains(str(r["error"]["message"]), "single die")
-	assert_eq(CoreResult.error_code(ClimbSettings.normalize({"exact_finish": true, "extra_turn_on_six": true, "dice_count": 2})), ClimbErrors.INVALID_SETTINGS)
+	assert_eq(CoreResult.error_code(ClimbSettings.normalize({"exact_finish": true, "extra_turn_on_six": true, "dice_count": 2, "need_one_to_start": false})), ClimbErrors.INVALID_SETTINGS)
 	# each half on its own is fine
 	assert_true(CoreResult.is_ok(ClimbSettings.normalize({"exact_finish": true})))
 	assert_true(CoreResult.is_ok(ClimbSettings.normalize({"exact_finish": false, "dice_count": 2})))

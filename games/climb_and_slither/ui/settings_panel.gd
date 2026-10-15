@@ -9,6 +9,7 @@ signal changed(settings: Dictionary)
 var _exact: CheckButton
 var _extra: CheckButton
 var _two_dice: CheckButton
+var _need_one: CheckButton
 var _current: Dictionary = ClimbSettings.defaults()
 
 
@@ -19,6 +20,8 @@ func _ready() -> void:
 	_exact.toggled.connect(func(on: bool) -> void: _edit("exact_finish", on))
 	_extra.toggled.connect(func(on: bool) -> void: _edit("extra_turn_on_six", on))
 	_two_dice.toggled.connect(func(on: bool) -> void: _edit("dice_count", 2 if on else 1))
+	_need_one = _option("Need a 1 to start", "A pawn stays off the board until its player rolls a 1.")
+	_need_one.toggled.connect(func(on: bool) -> void: _edit("need_one_to_start", on))
 	_refresh()
 
 
@@ -58,6 +61,7 @@ func _refresh() -> void:
 	_exact.set_pressed_no_signal(bool(_current["exact_finish"]))
 	_extra.set_pressed_no_signal(bool(_current["extra_turn_on_six"]))
 	_two_dice.set_pressed_no_signal(int(_current["dice_count"]) == 2)
+	_need_one.set_pressed_no_signal(bool(_current["need_one_to_start"]))
 	_apply(_exact, states["exact_finish"], "You must roll the exact number to land on the last square.")
 	_apply(_two_dice, states["two_dice"], "Roll two dice and move by the total.")
 

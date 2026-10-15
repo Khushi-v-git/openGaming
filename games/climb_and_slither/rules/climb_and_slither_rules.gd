@@ -8,7 +8,8 @@ extends GameRules
 ##   state_version, game_id, phase ("in_progress" | "finished"),
 ##   board {name, size, columns, snakes, ladders}   embedded copy, so saves and replays
 ##                                                   do not depend on the data file
-##   settings {exact_finish, extra_turn_on_six, dice_count}
+##   settings {exact_finish, extra_turn_on_six, dice_count, need_one_to_start}
+##                                  (need_one_to_start may be missing in older states: false)
 ##   players [{player_id, color}]   seat order = turn order; colors by seat
 ##   positions {player_id: int}     0 = not on the board yet, board.size = the last square
 ##   current_player, extra_turn     extra_turn: the current player rolls again
@@ -99,6 +100,7 @@ func new_game(player_ids: Array, board: Dictionary, settings: Dictionary, seed_v
 ## state you passed in is untouched. Events (in order) tell a UI what happened so it never
 ## has to work out rules itself:
 ##   rolled {player_id, dice, total}      moved {player_id, from, to, path}
+##   needs_one {player_id, dice}          (need_one_to_start: a player off the board rolled no 1)
 ##   overshoot {player_id, from, needed}  jumped {player_id, kind, from, to}
 ##   extra_turn {player_id}               turn_changed {player_id}
 ##   won {player_id}
@@ -140,7 +142,14 @@ func apply(state: Dictionary, player_id: String, action: Dictionary, active_play
 
 	var from: int = next["positions"][player_id]
 	var target: int = from + total
-	if target > size:
+	var enters_only: bool = settings.get("need_one_to_start", false) and from == 0
+	if enters_only:
+		if dice.has(1):
+			target = 1  # entering the board: exactly square 1, whatever the total
+		else:
+			target = from
+			events.append({"type": "needs_one", "player_id": player_id, "dice": dice.duplicate()})
+	elif target > size:
 		if settings["exact_finish"]:
 			events.append({"type": "overshoot", "player_id": player_id, "from": from, "needed": size - from})
 			target = from  # stays where it is
@@ -268,8 +277,11 @@ func validate_state(state: Dictionary) -> Dictionary:
 	var size: int = state["board"]["size"]
 	if typeof(state["settings"]) != TYPE_DICTIONARY:
 		return _invalid("The settings are damaged.")
-	var settings_check: Dictionary = ClimbSettings.normalize(state["settings"])
-	if not CoreResult.is_ok(settings_check) or settings_check["settings"] != state["settings"]:
+	var given_settings: Dictionary = state["settings"].duplicate()
+	if not given_settings.has("need_one_to_start"):
+		given_settings["need_one_to_start"] = false  # states from before this rule existed
+	var settings_check: Dictionary = ClimbSettings.normalize(given_settings)
+	if not CoreResult.is_ok(settings_check) or settings_check["settings"] != given_settings:
 		return _invalid("The settings are not valid.")
 
 	var players: Variant = state["players"]

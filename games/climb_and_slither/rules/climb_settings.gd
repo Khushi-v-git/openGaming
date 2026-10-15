@@ -9,6 +9,9 @@ extends RefCounted
 ##   extra_turn_on_six   true: after a roll that includes a 6 the same player rolls again
 ##                       (with two dice, either die showing 6 counts). There is no cap.
 ##   dice_count          1 or 2 dice, added together.
+##   need_one_to_start   true: a player who is not on the board yet (square 0) only enters it
+##                       with a 1 (with two dice, either die showing 1). Entering moves to
+##                       square 1, not by the total. Any other roll does nothing.
 ##
 ## exact_finish needs dice_count 1. With two dice the smallest total is 2, so a player on the
 ## square just before the last could never roll the 1 they need: they could neither finish nor
@@ -24,7 +27,7 @@ const TWO_DICE_NEEDS_NO_EXACT_FINISH: String = "Two dice can't be used with exac
 
 
 static func defaults() -> Dictionary:
-	return {"exact_finish": false, "extra_turn_on_six": false, "dice_count": 1}
+	return {"exact_finish": false, "extra_turn_on_six": false, "dice_count": 1, "need_one_to_start": false}
 
 
 ## Fills in defaults for anything missing and checks the rest. Returns {ok, settings} or

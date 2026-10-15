@@ -44,6 +44,8 @@ static func steps_for(event: Dictionary, names: Dictionary = {}) -> Array[Dictio
 		"jumped":
 			var up: bool = event["kind"] == "ladder"
 			steps.append({"op": "slide", "player_id": who, "kind": event["kind"], "from": int(event["from"]), "to": int(event["to"]), "duration": SLIDE_LADDER if up else SLIDE_SNAKE})
+		"needs_one":
+			steps.append({"op": "banner", "text": "%s needs a 1 to start" % name, "duration": BANNER})
 		"extra_turn":
 			steps.append({"op": "banner", "text": "%s rolls again" % name, "duration": BANNER})
 		"turn_skipped":

@@ -18,6 +18,7 @@ Everything is plain data, so it saves, replays and fuzzes. Classes:
 | `exact_finish` | false | must land exactly on the last square; an overshooting roll does not move |
 | `extra_turn_on_six` | false | roll again after a 6 (either die with two dice); no cap |
 | `dice_count` | 1 | 1 or 2. `exact_finish` needs 1 (with two dice the square before the last could never be finished) |
+| `need_one_to_start` | false | a player who is not on the board yet (square 0) enters only with a 1 (with two dice, either die). Entering moves to square 1, not by the total, with a normal `moved` event (path `[1]`) so the pawn hops onto the board. Any other roll does nothing: the rules emit `needs_one {player_id, dice}` and the turn passes as usual (a 6 still gives the extra turn when that rule is on; entering with a 1 never does by itself). Players already on the board move normally. States saved before this setting existed are read as `false`. |
 
 **For the host settings screen:** "exact finish" and "2 dice" exclude each other. The screen must
 not decide that itself: call `ClimbSettings.option_states(current_settings)`, which returns

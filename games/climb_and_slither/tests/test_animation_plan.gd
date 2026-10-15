@@ -41,6 +41,12 @@ func test_extra_turn_skip_turn_change_and_win() -> void:
 	assert_eq(_ops(ClimbAnimationPlan.steps_for({"type": "won", "player_id": "p1"})), ["win"])
 
 
+func test_a_roll_that_cannot_start_the_game_shows_a_banner() -> void:
+	var steps: Array[Dictionary] = ClimbAnimationPlan.steps_for({"type": "needs_one", "player_id": "p1", "dice": [4]}, {"p1": "Asha"})
+	assert_eq(_ops(steps), ["banner"])
+	assert_eq(steps[0]["text"], "Asha needs a 1 to start")
+
+
 func test_an_unknown_event_is_no_steps_not_an_error() -> void:
 	assert_eq(ClimbAnimationPlan.steps_for({"type": "something_new"}).size(), 0)
 	assert_eq(ClimbAnimationPlan.steps_for({}).size(), 0)
@@ -51,6 +57,7 @@ func test_every_step_has_a_positive_duration() -> void:
 		{"type": "rolled", "player_id": "p", "dice": [1], "total": 1}, {"type": "moved", "player_id": "p", "path": [1]},
 		{"type": "overshoot", "player_id": "p", "needed": 1}, {"type": "jumped", "player_id": "p", "kind": "snake", "from": 9, "to": 3},
 		{"type": "extra_turn", "player_id": "p"}, {"type": "turn_skipped", "player_id": "p"},
+		{"type": "needs_one", "player_id": "p", "dice": [2]},
 		{"type": "turn_changed", "player_id": "p"}, {"type": "won", "player_id": "p"},
 	]
 	for event: Dictionary in events:
