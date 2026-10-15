@@ -9,6 +9,7 @@ extends SceneTree
 const GAME: String = "climb_and_slither"
 
 var _out: String = "."
+var _failed: bool = false
 var _port: int = 0
 var _host_menu: MainMenu
 var _guest_menu: MainMenu
@@ -24,7 +25,7 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(AppSettings.path)
 	await _run()
 	DirAccess.remove_absolute(AppSettings.path)
-	quit()
+	quit(1 if _failed else 0)
 
 
 func _frames(count: int = 4) -> void:
@@ -97,7 +98,7 @@ func _run() -> void:
 	host_lobby.host_session()
 	if not await _until(func() -> bool: return host_lobby.shared_address != ""):
 		push_error("hosting never went live")
-		OS.set_exit_code(1)
+		_failed = true
 		return
 	var guest_lobby: LobbyScene = _guest_menu.open_join_lobby()
 	guest_lobby.name_edit.text = "Ben"
@@ -105,7 +106,7 @@ func _run() -> void:
 	guest_lobby.join_session()
 	if not await _until(func() -> bool: return guest_lobby.lobby_view.visible and host_lobby.players_box.get_child_count() == 2):
 		push_error("the guest never joined")
-		OS.set_exit_code(1)
+		_failed = true
 		return
 	guest_lobby.ready_button.button_pressed = true
 	await _until(func() -> bool: return not host_lobby.start_button.disabled)
@@ -115,7 +116,7 @@ func _run() -> void:
 	host_lobby.start_button.pressed.emit()
 	if not await _until(func() -> bool: return _host_menu.in_network_game() and _guest_menu.in_network_game()):
 		push_error("the game never started")
-		OS.set_exit_code(1)
+		_failed = true
 		return
 	var host_screen: ClimbGameScreen = _host_menu.network_screen()
 	var guest_screen: ClimbGameScreen = _guest_menu.network_screen()
