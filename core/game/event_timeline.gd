@@ -38,13 +38,14 @@ var _advancing: bool = false
 func push(batch: Dictionary) -> void:
 	assert(batch.has("seq") and batch.has("reason") and batch.has("events") and batch.has("view"), "malformed batch")
 	var seq: int = int(batch["seq"])
-	if _last_seq >= 0 and seq <= _last_seq:
-		return  # already seen (a duplicate or a late arrival)
-	var gap: bool = _last_seq >= 0 and seq != _last_seq + 1
+	var snapshot: bool = SNAP_REASONS.has(String(batch["reason"]))
+	if _last_seq >= 0 and seq <= _last_seq and not snapshot:
+		return  # already seen (a duplicate or a late arrival); a snapshot is always accepted
+	var gap: bool = _last_seq >= 0 and seq != _last_seq + 1 and not snapshot
 	var backlog: int = _pending.size() + (1 if not _current.is_empty() else 0)
 	_last_seq = seq
 	latest = batch["view"]
-	if SNAP_REASONS.has(String(batch["reason"])) or gap or backlog >= MAX_BACKLOG:
+	if snapshot or gap or backlog >= MAX_BACKLOG:
 		_snap()
 		return
 	_pending.append(batch)

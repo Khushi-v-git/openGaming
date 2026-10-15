@@ -132,7 +132,7 @@ func test_protocol_is_checked_before_game_and_version() -> void:
 	var host: HostRig = await start_host()
 	var raw: TransportRig = await raw_connect(host)
 	var hello: Dictionary = Handshake.hello("9.9.9", "other_game", "Zed")
-	hello["protocol_version"] = 2
+	hello["protocol_version"] = Protocol.PROTOCOL_VERSION + 1  # "not ours" whatever the current version is
 	raw.transport.send(Transport.HOST_PEER_ID, hello)
 	assert_true(await wait_for_raw_reject(raw))
 	assert_eq(raw_reject_code(raw), ErrorCodes.PROTOCOL_MISMATCH)

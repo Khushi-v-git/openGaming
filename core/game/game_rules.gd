@@ -23,6 +23,12 @@ func default_setup() -> Dictionary:
 	return {}
 
 
+## Checks house rules before the lobby stores them, so the host sees a problem at once. The
+## default accepts anything (a game with no settings).
+func validate_settings(_settings: Dictionary) -> Dictionary:
+	return CoreResult.success()
+
+
 ## Starts a game. `player_ids` is the seat order. `setup` is game-specific data the game needs
 ## to begin (a board, a deck list, ...), `settings` the house rules, `seed_value` the seed for
 ## the game's Prng. Returns {ok, state, events} or a failure.

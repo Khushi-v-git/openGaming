@@ -180,3 +180,28 @@ hidden information stay out of logs). Change `MessageLog.sink` to redirect, or s
 
 Network tests use `NetWait` (poll until a condition holds or N frames pass) and a
 `FakeClock`, so timeouts are tested without waiting.
+
+
+## Games on top of the lobby (protocol 2)
+
+`GameHost` (host) and `GameClient` (guest) in `core/game/` carry a game over the lobby's session.
+They know `GameRules` and nothing about any particular game.
+
+| message | from | payload |
+|---|---|---|
+| `game_action` | player | `{action}`: one game action. The host validates it with the rules. |
+| `game_resync` | player | none: "send me a full snapshot" (sent automatically after a gap in `seq`) |
+| `game_batch` | host | `{seq, reason, events, view}` built with `view_for` for that player only |
+| `game_error` | host | `{code, message, action}`: an action was refused; nothing changed |
+
+`reason`: `start`/`rematch` (a fresh game), `action`, `settle` (the turn moved because the player to
+move is away), `rejoin`/`resync` (a snapshot for one player). `seq` only goes up, also across
+rematches; snapshots are accepted whatever their `seq`. The raw state, including the random
+generator, never leaves the host (a test inspects every message that reaches a player). While the
+game is paused the host answers `GAME_PAUSED` to every game action, its own included.
+
+Lobby additions: `set_game_settings {settings}` (host, before the game starts; the game's
+`validate_settings` is asked first) puts the house rules in the lobby state so every guest can read
+them; `end_game` (host) sends everyone back to the lobby, dropping players who were away.
+Rematch is `GameHost.rematch()` and exists only on the host. Protocol 1 and 2 peers refuse each
+other with `PROTOCOL_MISMATCH`.

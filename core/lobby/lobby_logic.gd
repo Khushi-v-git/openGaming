@@ -28,7 +28,10 @@ const PHASE_OPEN: String = "open"
 const PHASE_IN_GAME: String = "in_game"
 
 ## The only action types the host accepts from a connected player.
-const PLAYER_ACTIONS: Array[String] = ["set_ready", "set_name", "leave", "start", "kick", "set_paused"]
+const PLAYER_ACTIONS: Array[String] = ["set_ready", "set_name", "leave", "start", "kick", "set_paused", "set_game_settings", "end_game"]
+
+## Most the host may store as game settings (serialized), so a lobby state stays small.
+const MAX_SETTINGS_CHARS: int = 4096
 
 
 static func create(game_id: String, min_players: int, max_players: int, host_player_id: String, host_name: String, min_active_players: int = 0) -> Dictionary:
@@ -41,6 +44,7 @@ static func create(game_id: String, min_players: int, max_players: int, host_pla
 		"revision": 0,
 		"min_active_players": clampi(min_active_players if min_active_players > 0 else min_players, 1, min_players),
 		"paused": false,
+		"game_settings": {},
 		"slots": [_new_slot(host_player_id, host_name, true)],
 	}
 
@@ -66,6 +70,10 @@ static func apply(state: Dictionary, player_id: String, action: Dictionary) -> D
 			result = _kick(next, player_id, action)
 		"set_paused":
 			result = _set_paused(next, player_id, action)
+		"set_game_settings":
+			result = _set_game_settings(next, player_id, action)
+		"end_game":
+			result = _end_game(next, player_id)
 		"disconnected":
 			result = _disconnected(next, player_id)
 		"reconnected":
@@ -223,6 +231,38 @@ static func _start(state: Dictionary, player_id: String) -> Dictionary:
 	if not CoreResult.is_ok(checked):
 		return checked
 	state["phase"] = PHASE_IN_GAME
+	state["paused"] = false
+	return CoreResult.success()
+
+
+## Host only, before the game starts: the house rules every player will see. The lobby does not
+## know what they mean (the game validates them); it only keeps plain, small data.
+static func _set_game_settings(state: Dictionary, player_id: String, action: Dictionary) -> Dictionary:
+	if player_id != state["host_player_id"]:
+		return CoreResult.failure(ErrorCodes.NOT_HOST, "Only the host chooses the game settings.")
+	if state["phase"] != PHASE_OPEN:
+		return CoreResult.failure(ErrorCodes.WRONG_PHASE, "The settings cannot change once the game has started.")
+	var settings: Variant = action.get("settings")
+	if typeof(settings) != TYPE_DICTIONARY or not Envelope.is_plain_data(settings) or JSON.stringify(settings).length() > MAX_SETTINGS_CHARS:
+		return CoreResult.failure(ErrorCodes.BAD_ACTION, "set_game_settings needs a small 'settings' object of plain data.")
+	state["game_settings"] = (settings as Dictionary).duplicate(true)
+	return CoreResult.success()
+
+
+## Host only: the game is over (or abandoned) and everyone goes back to the lobby. Players who
+## were away or removed lose their seat; everyone else must get ready again.
+static func _end_game(state: Dictionary, player_id: String) -> Dictionary:
+	if player_id != state["host_player_id"]:
+		return CoreResult.failure(ErrorCodes.NOT_HOST, "Only the host can end the game.")
+	if state["phase"] != PHASE_IN_GAME:
+		return CoreResult.failure(ErrorCodes.WRONG_PHASE, "There is no game to end.")
+	var kept: Array = []
+	for slot: Dictionary in state["slots"]:
+		if slot["connected"] and not slot["left"]:
+			slot["ready"] = slot["player_id"] == state["host_player_id"]
+			kept.append(slot)
+	state["slots"] = kept
+	state["phase"] = PHASE_OPEN
 	state["paused"] = false
 	return CoreResult.success()
 

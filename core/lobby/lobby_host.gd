@@ -15,6 +15,8 @@ signal host_failed(reason: String)
 signal rejoin_requested(player_id: String, player_name: String)  # a returning player waits for the host to let them in
 signal rejoin_request_cancelled(player_id: String)
 signal closed()
+signal game_ended()  # the host sent everyone back to the lobby
+signal player_returned(player_id: String)  # a player rejoined a started game (the game layer resends its view)
 
 var session: HostSession
 var state: Dictionary
@@ -24,6 +26,8 @@ var session_info: Dictionary = {}
 ## Optional: (player_id) -> Dictionary, the game's view_for() for that player. Used to
 ## resend the full current game state to a player who rejoins mid-game (rules 7, 9).
 var game_view_provider: Callable = Callable()
+## Optional: checks game settings before the lobby stores them. (settings) -> Result.
+var settings_validator: Callable = Callable()
 
 var _app_version: String
 var _game_id: String
@@ -181,6 +185,7 @@ func _on_player_joined(player_id: String, rejoined: bool) -> void:
 		_publish()  # everyone, including a rejoiner, gets the full current lobby state
 		if rejoined:
 			_send_game_view(player_id)
+			player_returned.emit(player_id)
 	else:
 		# Lost a race between admission and join (e.g. last seat taken): remove them.
 		session.kick_player(player_id, CoreResult.error_code(result), str(result["error"]["message"]))
@@ -240,6 +245,10 @@ func _apply_player_action(player_id: String, action: Dictionary) -> Dictionary:
 	var type: String = str(action.get("type", ""))
 	if not LobbyLogic.PLAYER_ACTIONS.has(type):
 		return CoreResult.failure(ErrorCodes.UNKNOWN_ACTION, "Unknown action '%s'." % type)
+	if type == "set_game_settings" and settings_validator.is_valid() and typeof(action.get("settings")) == TYPE_DICTIONARY:
+		var verdict: Dictionary = settings_validator.call(action["settings"])
+		if not CoreResult.is_ok(verdict):
+			return verdict
 	var result: Dictionary = LobbyLogic.apply(state, player_id, action)
 	if not CoreResult.is_ok(result):
 		return result
@@ -254,11 +263,13 @@ func _apply_player_action(player_id: String, action: Dictionary) -> Dictionary:
 		"leave":
 			session.kick_player(player_id, ErrorCodes.LEFT, "You left the lobby.")  # closes their connection
 			_revoke_if_gone(player_id)
-		"start":
+		"start", "end_game":
 			_forget_players_without_a_seat()
 	_publish()
 	if type == "start":
 		game_started.emit(state)
+	elif type == "end_game":
+		game_ended.emit()
 	return result
 
 

@@ -40,6 +40,12 @@ const _STATE_KEYS: Array[String] = [
 ]
 
 
+## Settings are checked the same way new_game would check them.
+func validate_settings(settings: Dictionary) -> Dictionary:
+	var checked: Dictionary = ClimbSettings.normalize(settings)
+	return checked if not CoreResult.is_ok(checked) else CoreResult.success()
+
+
 ## The classic board from the data file.
 func default_setup() -> Dictionary:
 	var loaded: Dictionary = ClimbBoard.load_file()

@@ -12,6 +12,7 @@ signal join_failed(code: String, message: String, host_info: Dictionary)  # reje
 signal state_changed(state: Dictionary)
 signal action_failed(code: String, message: String, action_type: String)
 signal game_started(state: Dictionary)
+signal game_ended()  # the host sent everyone back to the lobby
 signal game_message(message: Dictionary)  # non-lobby traffic, for the game layer
 signal left(code: String, message: String)  # session over: HOST_CLOSED, KICKED, HOST_LOST ...
 
@@ -150,6 +151,8 @@ func _on_lobby_state(lobby: Dictionary) -> void:
 	state_changed.emit(state)
 	if was_open and state["phase"] == LobbyLogic.PHASE_IN_GAME:
 		game_started.emit(state)
+	elif not was_open and state["phase"] == LobbyLogic.PHASE_OPEN:
+		game_ended.emit()
 
 
 func _finish(code: String, message: String) -> void:
