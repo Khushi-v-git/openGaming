@@ -4,6 +4,8 @@ extends Control
 ## Not part of the shipped app. Run it with:
 ##   godot --path . res://tests/manual/lobby_demo.tscn -- --name=Asha
 ## Options after "--": --name=<player name>  --port=<listen port, default 24680>
+##   --transport=auto   use the app's relay-or-direct choice (TransportFactory.network_config())
+##   --relay_url=<url>  relay to use (implies --transport=auto), e.g. ws://127.0.0.1:8787
 
 const GAME_ID: String = "manual_test"
 
@@ -11,6 +13,10 @@ const GAME_ID: String = "manual_test"
 func _ready() -> void:
 	var args: Dictionary = _parse_args(OS.get_cmdline_user_args())
 	var transport: Dictionary = TransportFactory.default_config()
+	if str(args.get("transport", "")) == "auto" or args.has("relay_url"):
+		transport = TransportFactory.network_config()
+		if args.has("relay_url"):
+			transport["relay_url"] = str(args["relay_url"])
 	if args.has("port"):
 		transport["port"] = int(args["port"])
 	var lobby: LobbyScene = LobbyScene.new()
