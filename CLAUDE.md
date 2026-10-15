@@ -94,8 +94,16 @@ docs/
    them batches `{seq, reason, events, view}`; `EventTimeline` plays a batch's
    events one at a time and ends on the batch's view. `core/game` contains no
    game-specific code (a test checks this against a tiny test-only game). A
-   game's `ui_scene` root has `setup(controller, players)` and a
-   `leave_requested` signal; an optional `settings_scene` has `settings()`.
+   game's `ui_scene` root has `setup(controller, players)` and the signals
+   `leave_requested` and `game_ended`; an optional `settings_scene` has
+   `settings()` and a `changed(settings)` signal (the lobby shows it to the
+   host and shows guests the read-only `GameRules.describe_settings`; the
+   lobby checks settings with `GameRules.validate_settings`). Networked games
+   use `GameHost` (the host's only copy of the rules and state; it sends each
+   player a batch `{seq, reason, events, view}` and answers illegal actions
+   with `game_error`, changing nothing), `GameClient` and
+   `NetworkGameController`; the host alone can rematch or end the game
+   (`end_game` returns everyone to the lobby).
 
 3. **Transport is an interface.** All networking goes through one small
    interface: `send(peer_id, message)`, `broadcast(message)`,
@@ -259,6 +267,9 @@ docs/
   no cap on consecutive extra turns. Exact finish needs one die: with two dice
   the square before the last could never be finished (minimum total is 2), so
   the combination is refused.
+  A fourth house rule, "need a 1 to start" (`need_one_to_start`, default off),
+  keeps pawns off the board until a die shows a 1; that roll moves the pawn
+  to square 1, any other roll from the start does nothing.
 - The rules draw one range_int(1, 6) per die, in order. Changing the draw
   order or the Prng algorithm breaks saves and replays and requires bumping
   state_version.
