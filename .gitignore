@@ -5,3 +5,8 @@ build/
 *.tmp
 /.vscode
 *.log
+# relay (Cloudflare Worker)
+node_modules/
+.wrangler/
+.dev.vars
+relay/cloudflare/worker-configuration.d.ts
