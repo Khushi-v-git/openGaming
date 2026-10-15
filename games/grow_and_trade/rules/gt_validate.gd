@@ -439,12 +439,13 @@ static func _check_founding(state: Dictionary, ids: Array[String]) -> String:
 	if expect == "village":
 		if last != "" and not buildings.has(last):
 			return "The last founded village is not on the board."
-		if buildings.size() != index or state["paths"].size() != index:
+		# "at most": settle() skips a placer who is away, so a step can have fewer pieces than its index
+		if buildings.size() > index or state["paths"].size() > index:
 			return "The founding step does not match what has been placed."
 	elif expect == "path":
 		if last == "" or not buildings.has(last) or buildings[last]["owner"] != placer:
 			return "A path is due, but there is no village of the placer to put it by."
-		if buildings.size() != index + 1 or state["paths"].size() != index:
+		if buildings.size() > index + 1 or state["paths"].size() > index:
 			return "The founding step does not match what has been placed."
 	else:
 		return "The founding step is unknown."

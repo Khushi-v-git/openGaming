@@ -100,9 +100,11 @@ static func _check_shape(type: String, action: Dictionary) -> Dictionary:
 			optional = ["victim"]
 		"play_card":
 			required = ["card"]
-			if action.get("card") == GtDeck.HARVEST:
+			# comparing a non-text card with a string is a script error, so look at the type first
+			var named: Variant = action.get("card")
+			if typeof(named) == TYPE_STRING and named == GtDeck.HARVEST:
 				required.append("resources")
-			elif action.get("card") == GtDeck.SWEEP:
+			elif typeof(named) == TYPE_STRING and named == GtDeck.SWEEP:
 				required.append("resource")
 	for key: Variant in action:
 		if key != "type" and not required.has(key) and not optional.has(key):

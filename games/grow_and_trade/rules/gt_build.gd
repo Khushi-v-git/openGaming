@@ -203,6 +203,8 @@ static func _first_hex(id: String, parts: int) -> Variant:
 		var xy: PackedStringArray = pieces[i].split(",")
 		if xy.size() != 2 or not xy[0].is_valid_int() or not xy[1].is_valid_int():
 			return null
+		if xy[0].length() > 6 or xy[1].length() > 6:
+			return null  # no board is that big, and to_int logs an engine error on huge numbers
 		if i == 0:
 			first = Vector2i(xy[0].to_int(), xy[1].to_int())
 	return first

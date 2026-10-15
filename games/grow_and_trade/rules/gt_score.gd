@@ -41,12 +41,19 @@ static func has_won(state: Dictionary, player_id: String) -> bool:
 	return points(state, player_id, true) >= int(state["settings"]["target_points"])
 
 
-## If the turn owner has reached the target, finishes the game: phase, winner, a `won` event.
+## If the turn owner has reached the target, finishes the game: phase, winner, a `won` event. Nothing is
+## left to do afterwards: the offer and any pending blocker move (a Guard card can win with one pending)
+## are dropped.
 static func finish_if_won(state: Dictionary, player_id: String, events: Array) -> void:
 	if state["phase"] == GtState.PHASE_PLAYING and has_won(state, player_id):
 		state["phase"] = GtState.PHASE_FINISHED
 		state["winner"] = player_id
-		state["offer"] = {}
+		if not (state["offer"] as Dictionary).is_empty():
+			state["offer"] = {}
+			events.append({"type": "offer_cancelled", "reason": "game_over"})
+		state["turn"]["pending"] = GtState.PENDING_NONE
+		state["turn"]["source"] = ""
+		state["turn"]["owed"] = {}
 		events.append({"type": "won", "player_id": player_id})
 
 
