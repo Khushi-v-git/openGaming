@@ -40,7 +40,7 @@ func _init(client_transport: Transport, app_version: String, game_id: String = "
 	_game_id = game_id
 	_handshake_timeout = int(options.get("handshake_timeout_msec", 5000))
 	_pending_wait = int(options.get("pending_wait_msec", 90000))  # longer than the host's own claim timeout
-	_host_silence_timeout = int(options.get("host_silence_timeout_msec", 20000))
+	_host_silence_timeout = int(options.get("host_silence_timeout_msec", -1))  # 0 = never; -1 = ask the transport
 	transport.join_succeeded.connect(_on_join_succeeded)
 	transport.join_failed.connect(_on_join_failed)
 	transport.peer_disconnected.connect(_on_peer_disconnected)
@@ -53,6 +53,8 @@ func join(address: String, player_name: String, transport_config: Dictionary = {
 	_rejoin = rejoin
 	_state = State.CONNECTING
 	transport.join_session(address, transport_config)
+	if _host_silence_timeout < 0:  # the transport that was actually chosen decides (see Transport.keepalive_policy)
+		_host_silence_timeout = int(transport.keepalive_policy()["host_silence_timeout_msec"])
 
 
 func leave() -> void:
@@ -76,7 +78,7 @@ func poll() -> void:
 		_state = State.IDLE
 		transport.leave()
 		connect_failed.emit("The host did not answer the handshake.")
-	elif _state == State.ACTIVE and now - _last_heard > _host_silence_timeout:
+	elif _state == State.ACTIVE and _host_silence_timeout > 0 and now - _last_heard > _host_silence_timeout:
 		_state = State.IDLE
 		transport.leave()
 		host_lost.emit("The host stopped responding.")

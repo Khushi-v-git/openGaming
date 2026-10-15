@@ -14,7 +14,8 @@ extends RefCounted
 ##   welcome_extra(player_id) -> Dictionary    extra data for that player's welcome.
 ##
 ## Options (all optional): max_pending_handshakes, handshake_timeout_msec,
-## ping_interval_msec, ping_timeout_msec, rate_burst, rate_per_sec,
+## ping_interval_msec, ping_timeout_msec (0 turns pings / the silence kick off; the defaults come
+## from transport.keepalive_policy()), rate_burst, rate_per_sec,
 ## max_rate_violations, pending_burst, pending_per_sec, close_grace_msec, claim_timeout_msec.
 
 signal player_joined(player_id: String, rejoined: bool)
@@ -63,8 +64,8 @@ func _init(host_transport: Transport, app_version: String, game_id: String, opti
 	_game_id = game_id
 	_max_pending = int(options.get("max_pending_handshakes", 8))
 	_handshake_timeout = int(options.get("handshake_timeout_msec", 5000))
-	_ping_interval = int(options.get("ping_interval_msec", 5000))
-	_ping_timeout = int(options.get("ping_timeout_msec", 15000))
+	_ping_interval = int(options.get("ping_interval_msec", -1))  # 0 = no pings; -1 = ask the transport
+	_ping_timeout = int(options.get("ping_timeout_msec", -1))  # 0 = never kick for silence
 	_rate_burst = float(options.get("rate_burst", 30))
 	_rate_per_sec = float(options.get("rate_per_sec", 20))
 	_max_violations = int(options.get("max_rate_violations", 20))
@@ -82,7 +83,20 @@ func _init(host_transport: Transport, app_version: String, game_id: String, opti
 ## Starts hosting. Returns a failure if it could not even start; otherwise the address
 ## to share arrives with the `hosting` signal (or `host_failed`).
 func start(transport_config: Dictionary) -> Dictionary:
-	return transport.host_session(transport_config)
+	var started: Dictionary = transport.host_session(transport_config)
+	if CoreResult.is_ok(started):
+		_resolve_keepalive()
+	return started
+
+
+## Options win; anything left unset comes from the transport that was actually chosen (a
+## "auto" transport only knows once hosting has started).
+func _resolve_keepalive() -> void:
+	var keepalive: Dictionary = transport.keepalive_policy()
+	if _ping_interval < 0:
+		_ping_interval = int(keepalive["ping_interval_msec"])
+	if _ping_timeout < 0:
+		_ping_timeout = int(keepalive["ping_timeout_msec"])
 
 
 func poll() -> void:
@@ -104,9 +118,9 @@ func poll() -> void:
 		if _closing.has(peer_id):
 			continue
 		var entry: Dictionary = _players[peer_id]
-		if now - int(entry["last_heard"]) > _ping_timeout:
+		if _ping_timeout > 0 and now - int(entry["last_heard"]) > _ping_timeout:
 			_kick(peer_id, ErrorCodes.PING_TIMEOUT, "No response from your connection.")
-		elif now - int(entry["last_ping"]) >= _ping_interval:
+		elif _ping_interval > 0 and now - int(entry["last_ping"]) >= _ping_interval:
 			entry["last_ping"] = now
 			_send(peer_id, Envelope.make(Protocol.T_PING))
 

@@ -57,6 +57,8 @@ var panel: PanelContainer
 
 ## The address or room code to share (host only), as reported by the transport.
 var shared_address: String = ""
+## What the transport calls what it shows the host to share ("address", "room code").
+var share_label: String = "address"
 
 var _host: LobbyHost = null
 var _client: LobbyClient = null
@@ -163,7 +165,7 @@ func _build_start_view() -> Control:
 	box.add_child(_label("Join a game"))
 	var join_row: HBoxContainer = HBoxContainer.new()
 	address_edit = LineEdit.new()
-	address_edit.placeholder_text = "Address from your host"
+	address_edit.placeholder_text = "Address or room code from your host"
 	address_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	join_row.add_child(address_edit)
 	join_button = Button.new()
@@ -301,7 +303,7 @@ func join_session() -> void:
 		status_label.text = str(cleaned["error"]["message"])
 		return
 	if address_edit.text.strip_edges().is_empty():
-		status_label.text = "Paste the address your host gave you."
+		status_label.text = "Paste the address or room code your host gave you."
 		return
 	_resume = {}
 	_begin_join(address_edit.text, cleaned["name"], {})
@@ -363,6 +365,7 @@ func _act(action: Dictionary) -> void:
 
 func _on_hosting(info: Dictionary) -> void:
 	shared_address = str(info["address"])
+	share_label = str(info.get("share_label", "address"))
 	_state = _host.state
 	_show_lobby_view()
 
@@ -456,7 +459,7 @@ func _render() -> void:
 	var my_id: String = _host.local_player_id if is_host else (_client.player_id if _client != null else "")
 	address_label.visible = is_host
 	copy_button.visible = is_host
-	address_label.text = "Share this address: %s" % shared_address
+	address_label.text = "Share this %s: %s" % [share_label, shared_address]
 	ready_button.visible = not is_host
 	start_button.visible = is_host and _state["phase"] == LobbyLogic.PHASE_OPEN
 	start_button.disabled = not LobbyLogic.ready_to_start(_state)

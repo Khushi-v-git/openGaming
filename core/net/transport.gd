@@ -25,8 +25,21 @@ extends RefCounted
 ## - Messages are plain-data envelopes (see Envelope). Implementations must deliver
 ##   the receiver an independent copy, as if it had crossed a wire.
 ## - leave() is idempotent. Afterwards the transport can be reused.
+## - link_state_changed(state) is optional and only emitted by transports whose link can
+##   degrade without the session ending (a relay holding a room for a host that dropped).
+##   It is a notice for the UI; sessions never depend on it. States: LINK_HOST_AWAY (a
+##   joiner: the host's connection dropped and the relay is waiting for it), LINK_RECONNECTING
+##   (the host: our own connection dropped and we are re-establishing it), LINK_OK (restored).
+##   If the link cannot be restored the normal events follow: peer_disconnected(HOST_PEER_ID)
+##   on a joiner, host_failed on the host.
+## - session_ready's info may carry `share_label`: what the address is called when shown to
+##   a player ("address" for a direct transport, "room code" for a relay). Default "address".
 
 const HOST_PEER_ID: int = 1
+
+const LINK_OK: String = "ok"
+const LINK_HOST_AWAY: String = "host_away"
+const LINK_RECONNECTING: String = "reconnecting"
 
 signal message_received(peer_id: int, message: Dictionary)
 signal peer_connected(peer_id: int)
@@ -35,6 +48,7 @@ signal join_succeeded()
 signal join_failed(reason: String)
 signal session_ready(info: Dictionary)  # hosting is live: {address, kind, ...}
 signal host_failed(reason: String)  # hosting failed after it had started; transport is inactive
+signal link_state_changed(state: String)  # optional notice, see the contract above
 
 
 ## Starts hosting. Returns {ok: true} or a failure if hosting could not start. What
@@ -71,6 +85,15 @@ func broadcast(message: Dictionary) -> void:
 ## first, so the disconnect can take a few polls.
 func disconnect_peer(_peer_id: int) -> void:
 	pass
+
+
+## How often the session layer should send its own application-level pings over this
+## transport, in milliseconds (0 = never). A direct transport relies on them to notice dead
+## peers. A relay transport keeps its own cheap keepalive and must not carry app pings,
+## because every message through a relay costs quota and wakes the room. HostSession and
+## ClientSession read this unless their options say otherwise.
+func keepalive_policy() -> Dictionary:
+	return {"ping_interval_msec": 5000, "ping_timeout_msec": 15000, "host_silence_timeout_msec": 20000}
 
 
 ## Drives I/O and emits signals. The owner calls this every frame.
