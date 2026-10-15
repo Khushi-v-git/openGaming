@@ -1,0 +1,21 @@
+{
+	"resources": ["timber", "clay", "fleece", "wheat", "stone"],
+	"costs": {
+		"path": {"timber": 1, "clay": 1},
+		"village": {"timber": 1, "clay": 1, "fleece": 1, "wheat": 1},
+		"town": {"stone": 3, "wheat": 2},
+		"card": {"fleece": 1, "wheat": 1, "stone": 1}
+	},
+	"pieces": {"path": 15, "village": 5, "town": 4},
+	"bank_supply": [
+		{"min_players": 3, "max_players": 4, "per_resource": 24},
+		{"min_players": 5, "max_players": 6, "per_resource": 30}
+	],
+	"deck": [
+		{"type": "guard", "count": 14},
+		{"type": "two_paths", "count": 2},
+		{"type": "harvest", "count": 2},
+		{"type": "sweep", "count": 2},
+		{"type": "point", "count": 5}
+	]
+}
