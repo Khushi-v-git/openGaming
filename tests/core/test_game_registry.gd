@@ -274,6 +274,25 @@ func test_bad_min_active_players_are_refused() -> void:
 		assert_eq(_error_of(data), GameManifest.INVALID_MANIFEST, "min_active_players %s" % str(bad))
 
 
+func test_online_only_defaults_to_false_and_can_be_set() -> void:
+	var r: Dictionary = GameManifest.validate(_alpha(), ALPHA_DIR)
+	assert_false(r["manifest"]["online_only"])
+	assert_true(GameManifest.allows_hotseat(r["manifest"]))
+	var data: Dictionary = _alpha()
+	data["online_only"] = true
+	var online: Dictionary = GameManifest.validate(data, ALPHA_DIR)
+	assert_true(CoreResult.is_ok(online))
+	assert_true(online["manifest"]["online_only"])
+	assert_false(GameManifest.allows_hotseat(online["manifest"]))
+
+
+func test_bad_online_only_is_refused() -> void:
+	for bad: Variant in ["yes", 1, null]:
+		var data: Dictionary = _alpha()
+		data["online_only"] = bad
+		assert_eq(_error_of(data), GameManifest.INVALID_MANIFEST, "online_only %s" % str(bad))
+
+
 # --- ui_scene is optional while a game is in development ------------------------------
 
 func test_a_manifest_without_ui_scene_is_valid_and_not_playable() -> void:

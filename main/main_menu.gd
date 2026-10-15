@@ -278,9 +278,10 @@ func _game_card(manifest: Dictionary, index: int = 0) -> Control:
 	join.pressed.connect(open_join_lobby)
 	row.add_child(join)
 	box.add_child(row)
-	var hotseat: Button = _pill("HotseatButton", "Play on this computer", "CreamButton")
-	hotseat.pressed.connect(func() -> void: choose_game(manifest["id"]))
-	box.add_child(hotseat)
+	if GameManifest.allows_hotseat(manifest):
+		var hotseat: Button = _pill("HotseatButton", "Play on this computer", "CreamButton")
+		hotseat.pressed.connect(func() -> void: choose_game(manifest["id"]))
+		box.add_child(hotseat)
 	return card
 
 
@@ -313,8 +314,10 @@ func _pill(button_name: String, text: String, variation: String) -> Button:
 func choose_game(game_id: String) -> void:
 	if not registry.has_ui(game_id):
 		return
-	_selected_id = game_id
 	var manifest: Dictionary = registry.get_manifest(game_id)
+	if not GameManifest.allows_hotseat(manifest):
+		return
+	_selected_id = game_id
 	game_list.visible = false
 	_bottom_row.visible = false
 	_title_block.visible = false

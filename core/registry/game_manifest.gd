@@ -12,6 +12,9 @@ extends RefCounted
 ##   "min_players": 2, "max_players": 4,
 ##   "min_active_players": 2,              optional: the fewest players present the game can
 ##                                         run with when someone drops; default = min_players
+##   "online_only": false,                 optional: true hides "Play on this computer" (hot-seat)
+##                                         for a game whose hidden information or trading needs
+##                                         every player on their own screen; default false
 ##   "rules_class": "res://games/<id>/rules/<file>.gd",   extends RefCounted (rule 2)
 ##   "ui_scene": "res://games/<id>/ui/<file>.tscn"   optional while the game is in
 ##                                         development; without it the game is registered but
@@ -53,6 +56,10 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 	if typeof(min_active) != TYPE_INT or min_active < 1 or min_active > min_players:
 		return _bad("'min_active_players' must be a whole number from 1 to min_players.")
 
+	var online_only: Variant = data.get("online_only", false)
+	if typeof(online_only) != TYPE_BOOL:
+		return _bad("'online_only' must be true or false.")
+
 	var icon: Dictionary = _check_path(data, "icon", game_dir, [])
 	if not CoreResult.is_ok(icon):
 		return icon
@@ -77,6 +84,7 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 		"min_players": min_players,
 		"max_players": max_players,
 		"min_active_players": min_active,
+		"online_only": online_only,
 		"rules_class": rules["path"],
 		"ui_scene": ui["path"],  # "" = no UI yet
 		"settings_scene": settings_scene["path"],  # "" = the game has no settings screen
@@ -86,6 +94,11 @@ static func validate(data: Dictionary, game_dir: String) -> Dictionary:
 ## True if the game has a UI scene, i.e. it can actually be played.
 static func has_ui(manifest: Dictionary) -> bool:
 	return str(manifest.get("ui_scene", "")) != ""
+
+
+## True if the game may be played hot-seat (everyone on this computer).
+static func allows_hotseat(manifest: Dictionary) -> bool:
+	return not bool(manifest.get("online_only", false))
 
 
 static func supports_player_count(manifest: Dictionary, count: int) -> bool:
