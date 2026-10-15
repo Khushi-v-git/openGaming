@@ -53,7 +53,8 @@ var connecting_view: Control
 var connecting_label: Label
 var cancel_button: Button
 var lobby_view: Control
-var address_label: Label
+var address_label: Label  # the full sentence (kept for tests and screen readers; the caption + field are what is drawn)
+var address_caption: Label
 var public_address_edit: LineEdit  # what the host shares; editable for a direct address
 var copy_button: Button
 var settings_box: VBoxContainer  # host only: the game's own house-rules panel
@@ -70,6 +71,16 @@ var start_button: Button
 var leave_button: Button
 var lobby_status_label: Label
 var panel: PanelContainer
+var empty_seats_box: VBoxContainer  # dashed "Waiting for a player..." rows (not part of players_box)
+var ready_card: Control  # the guest's big "I'm ready" row
+var you_row: HBoxContainer  # guest: "You are playing as X"
+var you_icon: TextureRect
+var you_label: Label
+var share_box: VBoxContainer  # host: what to share
+var share_help_label: Label
+var rules_card_node: PaperCard
+var house_rules_box: VBoxContainer  # guest: the host's house rules as a list with leaf bullets
+var bottom_caption: Label  # "Everyone must be ready" / "Waiting for the host to start..."
 
 ## The address or room code to share (host only), as reported by the transport.
 var shared_address: String = ""
@@ -123,6 +134,7 @@ func show_status(text: String) -> void:
 
 
 func _process(_delta: float) -> void:
+	status_label.visible = not status_label.text.is_empty()
 	if _host != null:
 		_host.poll()
 	elif _client != null:
@@ -133,20 +145,34 @@ func _process(_delta: float) -> void:
 
 func _build_ui() -> void:
 	var backdrop: ColorRect = ColorRect.new()
-	backdrop.color = Tokens.DEEP_TEAL
+	backdrop.color = Tokens.PAPER_CREAM
 	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(backdrop)
+	add_child(LeafBorder.new())
 
 	var center: CenterContainer = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
-	panel = PanelContainer.new()
+	var card: PaperCard = PaperCard.new()
+	card.back_color = Tokens.DEEP_TEAL
+	panel = card
 	center.add_child(panel)
+	var card_style: StyleBoxFlat = panel.get_theme_stylebox("panel") as StyleBoxFlat
+	card_style.content_margin_left = 34
+	card_style.content_margin_right = 34
+	card_style.content_margin_top = 22
+	card_style.content_margin_bottom = 24
+	card_style.set_corner_radius_all(32)
+	card.corner_radius = 32
+	card.back_offset = Vector2(10, 12)
 	var root: VBoxContainer = VBoxContainer.new()
+	root.add_theme_constant_override("separation", 8)
 	panel.add_child(root)
 
 	title_label = Label.new()
-	title_label.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
+	title_label.add_theme_font_size_override("font_size", 44)
+	title_label.add_theme_color_override("font_color", Tokens.INDIGO)
 	root.add_child(title_label)
 
 	start_view = _build_start_view()
@@ -162,7 +188,20 @@ func _build_ui() -> void:
 func _update_layout() -> void:
 	if panel == null:
 		return
-	var wanted: float = clampf(size.x * 0.4, 520.0, 760.0)
+	# the card is about 73% of the window wide in the lobby (the design's 1400 of 1920), narrower on
+	# the start screen and the waiting cards, and never wider than the window
+	var share: float = 0.73
+	var low: float = 700.0
+	var high: float = 1400.0
+	if start_view != null and start_view.visible:
+		share = 0.52
+		low = 520.0
+		high = 1000.0
+	elif connecting_view != null and connecting_view.visible:
+		share = 0.36
+		low = 460.0
+		high = 700.0
+	var wanted: float = clampf(size.x * share, low, high)
 	panel.custom_minimum_size.x = minf(wanted, maxf(0.0, size.x - 2.0 * Tokens.SPACE_L))
 	_fit_players_list()
 
@@ -178,21 +217,28 @@ func _fit_players_list() -> void:
 
 func _build_start_view() -> Control:
 	var box: VBoxContainer = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	var host_title: Label = _label("Host a game")
+	PaperStyle.title(host_title, 30)
+	box.add_child(host_title)
+	box.add_child(_caption("Your name"))
 	name_edit = LineEdit.new()
 	name_edit.placeholder_text = "Your name"
 	name_edit.max_length = Handshake.MAX_NAME_LENGTH
 	name_edit.text = str(options.get("player_name", ""))
+	PaperStyle.inset_field(name_edit)
 	box.add_child(name_edit)
 
-	box.add_child(_label("Host a game"))
 	if _transport_config.get("connection_ui", false):
 		connection_panel = ConnectionPanel.new()
 		connection_panel.initial_url = str(_transport_config.get("relay_url", ""))
 		connection_panel.host_via_changed.connect(func(_via: String) -> void: _update_port_visibility())
 		box.add_child(connection_panel)
 	var host_row: HBoxContainer = HBoxContainer.new()
+	host_row.add_theme_constant_override("separation", 12)
 	if _transport_config.has("port"):  # only transports that listen on a port show this
-		port_label = _label("Port")
+		port_label = _caption("Port")
+		port_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		host_row.add_child(port_label)
 		port_spin = SpinBox.new()
 		port_spin.min_value = 1
@@ -201,19 +247,26 @@ func _build_start_view() -> Control:
 		host_row.add_child(port_spin)
 	host_button = Button.new()
 	host_button.text = "Host"
+	host_button.theme_type_variation = &"PrimaryButton"
 	host_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	host_button.pressed.connect(host_session)
 	host_row.add_child(host_button)
 	box.add_child(host_row)
 
-	box.add_child(_label("Join a game"))
+	box.add_child(PaperStyle.dashed_rule())
+	var join_title: Label = _label("Join a game")
+	PaperStyle.title(join_title, 30)
+	box.add_child(join_title)
 	var join_row: HBoxContainer = HBoxContainer.new()
+	join_row.add_theme_constant_override("separation", 12)
 	address_edit = LineEdit.new()
 	address_edit.placeholder_text = "Address or room code from your host"
 	address_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	PaperStyle.inset_field(address_edit)
 	join_row.add_child(address_edit)
 	join_button = Button.new()
 	join_button.text = "Join"
+	join_button.custom_minimum_size.x = 110.0
 	join_button.pressed.connect(join_session)
 	join_row.add_child(join_button)
 	box.add_child(join_row)
@@ -221,16 +274,21 @@ func _build_start_view() -> Control:
 	_update_port_visibility()
 	rejoin_button = Button.new()
 	rejoin_button.text = "Rejoin the game you were in"
+	rejoin_button.theme_type_variation = &"PrimaryButton"
 	rejoin_button.pressed.connect(rejoin_session)
 	box.add_child(rejoin_button)
-	back_button = Button.new()
-	back_button.text = "Back"
-	back_button.pressed.connect(func() -> void: back_requested.emit())
-	box.add_child(back_button)
 
 	status_label = _label("")
-	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	PaperStyle.error(status_label)
 	box.add_child(status_label)
+	var bottom: HBoxContainer = HBoxContainer.new()
+	back_button = Button.new()
+	back_button.text = "Back"
+	back_button.theme_type_variation = &"CreamButton"
+	back_button.custom_minimum_size.x = 150.0
+	back_button.pressed.connect(func() -> void: back_requested.emit())
+	bottom.add_child(back_button)
+	box.add_child(bottom)
 	return box
 
 
@@ -243,86 +301,218 @@ func _update_port_visibility() -> void:
 	port_label.visible = show_port
 
 
+## "Starting your game...", "Connecting to ...", "Waiting for the host to let you back in...":
+## bouncing dots, the message, and Cancel.
 func _build_connecting_view() -> Control:
 	var box: VBoxContainer = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 18)
+	var loader: DotsLoader = DotsLoader.new()
+	loader.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(loader)
 	connecting_label = _label("Connecting...")
+	PaperStyle.title(connecting_label, 30)
+	connecting_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	connecting_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(connecting_label)
 	cancel_button = Button.new()
 	cancel_button.text = "Cancel"
+	cancel_button.theme_type_variation = &"CreamButton"
+	cancel_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cancel_button.custom_minimum_size.x = 200.0
 	cancel_button.pressed.connect(cancel)
 	box.add_child(cancel_button)
 	return box
 
 
+## The lobby: two columns. Left: the players (and, for a guest, the ready toggle). Right: what to
+## share and the house rules. Bottom: Leave on the left, the start button or a waiting line on the right.
 func _build_lobby_view() -> Control:
 	var box: VBoxContainer = VBoxContainer.new()
-	var address_row: HBoxContainer = HBoxContainer.new()
-	address_label = _label("")
-	address_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	address_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_theme_constant_override("separation", 10)
+	address_label = _label("")  # the full sentence; kept for tests and screen readers, not drawn
+	address_label.visible = false
 	box.add_child(address_label)
-	public_address_edit = LineEdit.new()
-	public_address_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	public_address_edit.text_submitted.connect(func(_text: String) -> void: _save_public_address())
-	public_address_edit.focus_exited.connect(_save_public_address)
-	address_row.add_child(public_address_edit)
-	copy_button = Button.new()
-	copy_button.text = "Copy"
-	copy_button.pressed.connect(func() -> void: DisplayServer.clipboard_set(public_address_edit.text))
-	address_row.add_child(copy_button)
-	box.add_child(address_row)
 
-	settings_box = VBoxContainer.new()
-	settings_box.visible = false
-	box.add_child(settings_box)
-	house_rules_label = _label("")
-	house_rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	house_rules_label.visible = false
-	box.add_child(house_rules_label)
+	var columns: HBoxContainer = HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 36)
+	box.add_child(columns)
 
+	# --- left: players ---
+	var left: VBoxContainer = VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.size_flags_stretch_ratio = 55.0
+	left.add_theme_constant_override("separation", 8)
+	columns.add_child(left)
+	left.add_child(_section_title("Players"))
 	players_box = VBoxContainer.new()
+	players_box.add_theme_constant_override("separation", 10)
 	players_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	players_scroll = ScrollContainer.new()
 	players_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	players_scroll.add_child(players_box)
-	box.add_child(players_scroll)
-
+	left.add_child(players_scroll)
+	empty_seats_box = VBoxContainer.new()
+	empty_seats_box.add_theme_constant_override("separation", 10)
+	left.add_child(empty_seats_box)
 	claims_box = VBoxContainer.new()
-	box.add_child(claims_box)
-
-	notice_label = _label("")
-	notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(notice_label)
-	continue_button = Button.new()
-	continue_button.text = "Continue without waiting"
-	continue_button.pressed.connect(func() -> void: _act({"type": "set_paused", "paused": false}))
-	box.add_child(continue_button)
-	wait_button = Button.new()
-	wait_button.text = "Wait for them"
-	wait_button.pressed.connect(func() -> void: _act({"type": "set_paused", "paused": true}))
-	box.add_child(wait_button)
-
+	left.add_child(claims_box)
 	ready_button = CheckButton.new()
 	ready_button.text = "I'm ready"
+	ready_button.add_theme_font_size_override("font_size", 24)
 	ready_button.toggled.connect(func(pressed: bool) -> void: _act({"type": "set_ready", "ready": pressed}))
-	box.add_child(ready_button)
+	var ready_row: PanelContainer = PanelContainer.new()
+	ready_row.add_theme_stylebox_override("panel", _row_box())
+	ready_row.add_child(ready_button)
+	ready_card = ready_row
+	left.add_child(ready_row)
 
-	start_button = Button.new()
-	start_button.text = "Start game"
-	start_button.pressed.connect(func() -> void: _act({"type": "start"}))
-	box.add_child(start_button)
+	# --- right: share + house rules ---
+	var right: VBoxContainer = VBoxContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_stretch_ratio = 45.0
+	right.add_theme_constant_override("separation", 12)
+	columns.add_child(right)
+	you_row = HBoxContainer.new()
+	you_row.add_theme_constant_override("separation", 12)
+	you_icon = TextureRect.new()
+	you_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	you_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	you_icon.custom_minimum_size = Vector2(40.0, 40.0)
+	you_row.add_child(you_icon)
+	you_label = _label("")
+	you_label.add_theme_font_size_override("font_size", 22)
+	you_row.add_child(you_label)
+	right.add_child(you_row)
+
+	share_box = VBoxContainer.new()
+	share_box.add_theme_constant_override("separation", 6)
+	address_caption = _section_title("Share this address")
+	share_box.add_child(address_caption)
+	var address_row: HBoxContainer = HBoxContainer.new()
+	address_row.add_theme_constant_override("separation", 10)
+	public_address_edit = LineEdit.new()
+	public_address_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	public_address_edit.text_submitted.connect(func(_text: String) -> void: _save_public_address())
+	public_address_edit.focus_exited.connect(_save_public_address)
+	PaperStyle.inset_field(public_address_edit, 22)
+	address_row.add_child(public_address_edit)
+	copy_button = Button.new()
+	copy_button.text = "Copy"
+	copy_button.custom_minimum_size = Vector2(96.0, 44.0)
+	copy_button.pressed.connect(func() -> void: DisplayServer.clipboard_set(public_address_edit.text))
+	address_row.add_child(copy_button)
+	share_box.add_child(address_row)
+	share_help_label = _label("Friends type this code under Join game")
+	share_help_label.add_theme_font_size_override("font_size", 16)
+	share_box.add_child(share_help_label)
+	right.add_child(share_box)
+
+	var rules_card: PaperCard = PaperCard.new()
+	rules_card.back_color = Tokens.SAFFRON
+	rules_card.back_offset = Vector2(6, 8)
+	rules_card.corner_radius = 22
+	rules_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var rules_style: StyleBoxFlat = rules_card.get_theme_stylebox("panel") as StyleBoxFlat
+	rules_style.set_corner_radius_all(22)
+	rules_style.content_margin_left = 20
+	rules_style.content_margin_right = 20
+	rules_style.content_margin_top = 12
+	rules_style.content_margin_bottom = 12
+	rules_card_node = rules_card
+	var rules_box: VBoxContainer = VBoxContainer.new()
+	rules_box.add_theme_constant_override("separation", 4)
+	rules_card.add_child(rules_box)
+	rules_box.add_child(_section_title("House rules"))
+	settings_box = VBoxContainer.new()
+	settings_box.add_theme_constant_override("separation", 0)
+	settings_box.visible = false
+	rules_box.add_child(settings_box)
+	house_rules_label = _label("")  # "House rules: A, B": kept for tests and screen readers, not drawn
+	house_rules_label.visible = false
+	rules_box.add_child(house_rules_label)
+	house_rules_box = VBoxContainer.new()
+	house_rules_box.add_theme_constant_override("separation", 8)
+	house_rules_box.visible = false
+	rules_box.add_child(house_rules_box)
+	right.add_child(rules_card)
+
+	# --- notices and the bottom row ---
+	notice_label = _label("")
+	PaperStyle.notice(notice_label, Tokens.ROSE.lerp(Tokens.PAPER_CREAM, 0.75))
+	box.add_child(notice_label)
+	var decisions: HBoxContainer = HBoxContainer.new()
+	decisions.add_theme_constant_override("separation", 12)
+	continue_button = Button.new()
+	continue_button.text = "Continue without waiting"
+	continue_button.theme_type_variation = &"PrimaryButton"
+	continue_button.pressed.connect(func() -> void: _act({"type": "set_paused", "paused": false}))
+	decisions.add_child(continue_button)
+	wait_button = Button.new()
+	wait_button.text = "Wait for them"
+	wait_button.theme_type_variation = &"CreamButton"
+	wait_button.pressed.connect(func() -> void: _act({"type": "set_paused", "paused": true}))
+	decisions.add_child(wait_button)
+	box.add_child(decisions)
 
 	lobby_status_label = _label("")
 	lobby_status_label.visible = false  # only takes room while it has something to say
-	lobby_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	PaperStyle.error(lobby_status_label)
 	box.add_child(lobby_status_label)
 
+	var actions: HBoxContainer = HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 16)
 	leave_button = Button.new()
 	leave_button.text = "Leave"
+	leave_button.theme_type_variation = &"CreamButton"
+	leave_button.custom_minimum_size.x = 150.0
 	leave_button.pressed.connect(leave)
-	box.add_child(leave_button)
+	actions.add_child(leave_button)
+	var spacer: Control = Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_child(spacer)
+	bottom_caption = _label("")
+	bottom_caption.add_theme_font_size_override("font_size", 20)
+	actions.add_child(bottom_caption)
+	start_button = Button.new()
+	start_button.text = "Start game"
+	start_button.theme_type_variation = &"PrimaryButton"
+	start_button.custom_minimum_size.x = 230.0
+	start_button.pressed.connect(func() -> void: _act({"type": "start"}))
+	actions.add_child(start_button)
+	box.add_child(actions)
 	return box
+
+
+func _section_title(text: String) -> Label:
+	var label: Label = _label(text)
+	PaperStyle.title(label, 26)
+	return label
+
+
+## The raised pill behind a row of the lobby (a player, the ready toggle).
+func _row_box() -> StyleBoxFlat:
+	var box: StyleBoxFlat = StyleBoxFlat.new()
+	box.bg_color = Tokens.PAPER_CREAM.lightened(0.3)
+	box.set_corner_radius_all(28)
+	box.shadow_color = Color(Tokens.INK, 0.22)
+	box.shadow_size = 3
+	box.shadow_offset = Vector2(1, 3)
+	box.content_margin_left = 22
+	box.content_margin_right = 14
+	box.content_margin_top = 4
+	box.content_margin_bottom = 4
+	return box
+
+
+## The colour of the card peeking out behind the main card, and the card's width for this view.
+func _look(back_color: Color) -> void:
+	var card: PaperCard = panel as PaperCard
+	if card != null:
+		card.back_color = back_color
+		card.back.queue_redraw()
+	title_label.visible = not (connecting_view != null and connecting_view.visible)
+	title_label.add_theme_font_size_override("font_size", 30 if (start_view != null and start_view.visible) else 44)
+	_update_layout()
 
 
 func _set_lobby_status(text: String) -> void:
@@ -333,6 +523,12 @@ func _set_lobby_status(text: String) -> void:
 func _label(text: String) -> Label:
 	var label: Label = Label.new()
 	label.text = text
+	return label
+
+
+func _caption(text: String) -> Label:
+	var label: Label = _label(text)
+	PaperStyle.caption(label)
 	return label
 
 
@@ -515,6 +711,7 @@ func _show_start_view(message: String) -> void:
 	lobby_view.visible = false
 	rejoin_button.visible = not _resume.is_empty()
 	status_label.text = message
+	_look(Tokens.ROSE if not message.is_empty() else Tokens.DEEP_TEAL)
 	_update_title()
 
 
@@ -523,12 +720,14 @@ func _show_connecting(message: String) -> void:
 	connecting_view.visible = true
 	lobby_view.visible = false
 	connecting_label.text = message
+	_look(Tokens.INDIGO if message.begins_with("Waiting") else Tokens.SAFFRON)
 
 
 func _show_lobby_view() -> void:
 	start_view.visible = false
 	connecting_view.visible = false
 	lobby_view.visible = true
+	_look(Tokens.ROSE)
 	_set_lobby_status("")
 	if _client != null:
 		_state = _client.state
@@ -542,7 +741,10 @@ func _render() -> void:
 		return
 	var is_host: bool = _host != null
 	var my_id: String = _host.local_player_id if is_host else (_client.player_id if _client != null else "")
-	address_label.visible = is_host
+	var open: bool = _state["phase"] == LobbyLogic.PHASE_OPEN
+	address_caption.text = "Share this %s" % share_label
+	share_box.visible = is_host
+	address_caption.visible = is_host
 	copy_button.visible = is_host
 	public_address_edit.visible = is_host
 	var shown: String = _shown_address()
@@ -550,25 +752,101 @@ func _render() -> void:
 	if not public_address_edit.has_focus():
 		public_address_edit.text = shown
 	public_address_edit.editable = _address_editable
+	_style_share_field()
+	share_help_label.visible = is_host and share_label == "room code"
 	_render_settings(is_host)
 	ready_button.visible = not is_host
-	start_button.visible = is_host and _state["phase"] == LobbyLogic.PHASE_OPEN
+	ready_card.visible = not is_host
+	start_button.visible = is_host and open
 	start_button.disabled = not LobbyLogic.ready_to_start(_state)
 	for child: Node in players_box.get_children():
 		players_box.remove_child(child)
 		child.queue_free()
+	var seat: int = 0
+	var my_seat: int = -1
+	var my_name: String = ""
 	for slot: Dictionary in _state["slots"]:
-		players_box.add_child(_player_row(slot, my_id, is_host))
+		players_box.add_child(_player_row(slot, my_id, is_host, seat))
 		if slot["player_id"] == my_id:
 			ready_button.set_pressed_no_signal(bool(slot["ready"]))  # the toggle mirrors the host's state
+			my_seat = seat
+			my_name = str(slot["name"])
+		seat += 1
+	_render_empty_seats(open)
+	_render_you(is_host, my_seat, my_name)
 	_render_claims(is_host)
 	_render_pause(is_host)
 	_fit_players_list()
-	var started: bool = _state["phase"] == LobbyLogic.PHASE_IN_GAME
+	var started: bool = not open
 	ready_button.disabled = started
 	if started:
 		start_button.disabled = true
+	_render_bottom_caption(is_host, open)
 	_update_title()
+
+
+## One dashed "Waiting for a player..." row per free seat (never part of players_box).
+func _render_empty_seats(open: bool) -> void:
+	for child: Node in empty_seats_box.get_children():
+		empty_seats_box.remove_child(child)
+		child.queue_free()
+	if not open:
+		return
+	var free: int = int(_state["max_players"]) - (_state["slots"] as Array).size()
+	for _i: int in mini(free, 2):  # one or two hints are enough; a big table need not show them all
+		var seat: PaperEmptySeat = PaperEmptySeat.new()
+		seat.seat_height = _row_height()
+		seat.custom_minimum_size.y = _row_height()
+		empty_seats_box.add_child(seat)
+
+
+## Guests: "You are playing as <name>" with their pawn.
+func _render_you(is_host: bool, my_seat: int, my_name: String) -> void:
+	you_row.visible = not is_host and my_seat >= 0
+	if not you_row.visible:
+		return
+	you_label.text = "You are playing as %s" % my_name
+	var colors: Array = options.get("seat_colors", _PAWN_COLORS)
+	you_icon.visible = my_seat < colors.size()
+	if you_icon.visible:
+		you_icon.texture = load("res://core/assets/pawn-%s.svg" % str(colors[my_seat]))
+
+
+func _render_bottom_caption(is_host: bool, open: bool) -> void:
+	if is_host:
+		bottom_caption.visible = open and not LobbyLogic.ready_to_start(_state)
+		bottom_caption.text = "Everyone must be ready"
+	else:
+		bottom_caption.visible = open
+		bottom_caption.text = "Waiting for the host to start..."
+
+
+## A relay room code is shown big and spaced out and cannot be edited; a direct address is a
+## normal field.
+func _style_share_field() -> void:
+	var big: bool = not _address_editable
+	if big:
+		var spaced: FontVariation = FontVariation.new()
+		spaced.base_font = AppTheme.build_font()
+		spaced.spacing_glyph = 9
+		public_address_edit.add_theme_font_override("font", spaced)
+		public_address_edit.add_theme_font_size_override("font_size", 40)
+		public_address_edit.add_theme_color_override("font_color", Tokens.DEEP_TEAL)
+		public_address_edit.add_theme_color_override("font_uneditable_color", Tokens.DEEP_TEAL)
+		public_address_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		public_address_edit.custom_minimum_size.y = 64.0
+	else:
+		public_address_edit.remove_theme_font_override("font")
+		public_address_edit.add_theme_font_size_override("font_size", 22)
+		public_address_edit.remove_theme_color_override("font_color")
+		public_address_edit.remove_theme_color_override("font_uneditable_color")
+		public_address_edit.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		public_address_edit.custom_minimum_size.y = 48.0
+
+
+## Rows get taller with the window: 56 px at 720p up to 80 px at 1080p.
+func _row_height() -> float:
+	return clampf(size.y / 13.5, 52.0, 80.0)
 
 
 ## What the host shares: the address the transport reports, or the one the host typed instead
@@ -589,9 +867,12 @@ func _save_public_address() -> void:
 ## The host's house-rules panel (the game's own settings scene), or the guests' read-only summary.
 func _render_settings(is_host: bool) -> void:
 	settings_box.visible = false
-	house_rules_label.visible = false
+	house_rules_label.visible = false  # the plain sentence is kept for tests; the list below is what is drawn
+	house_rules_box.visible = false
 	var registry: GameRegistry = options.get("game_registry", null)
 	var game_id: String = str(options.get("game_id", ""))
+	if game_id.is_empty():
+		game_id = str(_state.get("game_id", ""))  # a guest learns the game from the host
 	if registry == null or game_id.is_empty() or not registry.has(game_id):
 		return
 	if is_host:
@@ -604,7 +885,18 @@ func _render_settings(is_host: bool) -> void:
 		return
 	var lines: Array = rules.describe_settings(_state.get("game_settings", {}))
 	house_rules_label.text = "House rules: %s" % ", ".join(lines)
-	house_rules_label.visible = not lines.is_empty()
+	house_rules_box.visible = not lines.is_empty()
+	for child: Node in house_rules_box.get_children():
+		house_rules_box.remove_child(child)
+		child.queue_free()
+	for line: Variant in lines:
+		var item: HBoxContainer = HBoxContainer.new()
+		item.add_theme_constant_override("separation", 12)
+		item.add_child(LeafBullet.new())
+		var text: Label = _label(str(line))
+		text.add_theme_font_size_override("font_size", 22)
+		item.add_child(text)
+		house_rules_box.add_child(item)
 
 
 func _build_settings_panel(registry: GameRegistry, game_id: String) -> void:
@@ -612,6 +904,8 @@ func _build_settings_panel(registry: GameRegistry, game_id: String) -> void:
 	if scene == null:
 		return
 	settings_panel = scene.instantiate()
+	if settings_panel is Control:
+		(settings_panel as Control).add_theme_constant_override("separation", 0)  # compact rows
 	settings_box.add_child(settings_panel)
 	if settings_panel.has_signal("changed"):
 		settings_panel.connect("changed", func(_settings: Dictionary) -> void: _push_settings())
@@ -652,10 +946,12 @@ func _render_claims(is_host: bool) -> void:
 		row.add_child(label)
 		var player_id: String = request["player_id"]
 		var allow: Button = Button.new()
+		PaperStyle.small_button(allow, &"PrimaryButton")
 		allow.text = "Let in"
 		allow.pressed.connect(func() -> void: _host.answer_rejoin(player_id, true))
 		row.add_child(allow)
 		var decline: Button = Button.new()
+		PaperStyle.small_button(decline)
 		decline.text = "Decline"
 		decline.pressed.connect(func() -> void: _host.answer_rejoin(player_id, false))
 		row.add_child(decline)
@@ -699,24 +995,73 @@ func _player_limits(game_id: String) -> Dictionary:
 	return {"min": int(options.get("min_players", 2)), "max": int(options.get("max_players", 4)), "min_active": int(options.get("min_active_players", 0))}
 
 
-func _player_row(slot: Dictionary, my_id: String, is_host: bool) -> Control:
-	var row: HBoxContainer = HBoxContainer.new()
+const _PAWN_COLORS: Array = ["red", "blue", "green", "yellow"]
+
+
+## One row: [name (with the seat's pawn and, for the host, a crown)] [status pill] [Remove].
+## Pawn colours follow seat order; set options["seat_colors"] = [] for a game that has none.
+func _player_row(slot: Dictionary, my_id: String, is_host: bool, seat: int = 0) -> Control:
+	var row: PaperRow = PaperRow.new()
+	var height: float = _row_height()
+	row.row_height = height
 	var label: Label = _label(_slot_text(slot, my_id))
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(label)
+	label.clip_text = true
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.custom_minimum_size.x = 80.0
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 24)
+	label.add_theme_color_override("font_color", Tokens.INDIGO)
+	var indent: StyleBoxEmpty = StyleBoxEmpty.new()
+	indent.content_margin_left = height * 0.95
+	label.add_theme_stylebox_override("normal", indent)
+	var colors: Array = options.get("seat_colors", _PAWN_COLORS)
+	if seat < colors.size():
+		label.add_child(_icon("res://core/assets/pawn-%s.svg" % str(colors[seat]), 12.0, height * 0.75))
 	var is_host_slot: bool = slot["player_id"] == _state["host_player_id"]
+	if is_host_slot:
+		# the crown sits on the pawn's head
+		label.add_child(_icon("res://core/assets/icon-crown.svg", 12.0 + (height * 0.75 - 24.0) / 2.0, 24.0, -height * 0.36))
+	row.add_child(label)
 	var status: String = "Ready" if slot["ready"] else "Not ready"
 	if not slot["connected"]:
 		status = "Disconnected"
-	row.add_child(_label(status))
+	var pill: Label = _label(status)
+	var good: bool = slot["ready"] and slot["connected"]
+	var fill: Color = Tokens.FOREST_GREEN if good else (Tokens.ROSE if not slot["connected"] else Tokens.PAPER_CREAM.darkened(0.14))
+	PaperStyle.pill(pill, fill, Tokens.PAPER_CREAM if fill != Tokens.PAPER_CREAM.darkened(0.14) else Tokens.INK)
+	pill.add_theme_font_size_override("font_size", 19)
+	if good:  # a check in a cream dot before the word
+		var padded: StyleBoxFlat = pill.get_theme_stylebox("normal").duplicate() as StyleBoxFlat
+		padded.content_margin_left = 44
+		pill.add_theme_stylebox_override("normal", padded)
+		pill.add_child(_icon("res://core/assets/icon-check.svg", 8.0, 26.0))
+	row.add_child(pill)
 	var removable: bool = _state["phase"] == LobbyLogic.PHASE_OPEN or not slot["connected"]
 	if is_host and not is_host_slot and not slot["left"] and removable:
 		var kick: Button = Button.new()
+		PaperStyle.small_button(kick)
 		kick.text = "Remove"
+		kick.custom_minimum_size.y = 38.0
 		var target: String = slot["player_id"]
 		kick.pressed.connect(func() -> void: _act({"type": "kick", "player_id": target}))
 		row.add_child(kick)
 	return row
+
+
+## A small picture pinned to the left of its parent label, vertically centred (plus `lift`).
+func _icon(path: String, left: float, edge: float, lift: float = 0.0) -> TextureRect:
+	var icon: TextureRect = TextureRect.new()
+	icon.texture = load(path)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT)
+	icon.offset_left = left
+	icon.offset_right = left + edge
+	icon.offset_top = -edge / 2.0 + lift
+	icon.offset_bottom = edge / 2.0 + lift
+	return icon
 
 
 func _slot_text(slot: Dictionary, my_id: String) -> String:
@@ -726,3 +1071,27 @@ func _slot_text(slot: Dictionary, my_id: String) -> String:
 	if slot["player_id"] == my_id:
 		text += " (you)"
 	return text
+
+
+## A small green paper leaf: the bullet in front of a house rule.
+class LeafBullet:
+	extends Control
+
+	func _init() -> void:
+		custom_minimum_size = Vector2(24.0, 24.0)
+		size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var leaf: PackedVector2Array = PackedVector2Array()
+		for i: int in range(11):
+			var t: float = float(i) / 10.0
+			leaf.append(Vector2(2.0 + t * 20.0, 12.0 - sin(t * PI) * 8.0))
+		for i: int in range(11):
+			var t: float = float(i) / 10.0
+			leaf.append(Vector2(22.0 - t * 20.0, 12.0 + sin(t * PI) * 8.0))
+		var shadow: PackedVector2Array = PackedVector2Array()
+		for point: Vector2 in leaf:
+			shadow.append(point + Vector2(1.5, 2.0))
+		draw_colored_polygon(shadow, Color(Tokens.INK, 0.25))
+		draw_colored_polygon(leaf, Tokens.FOREST_GREEN)

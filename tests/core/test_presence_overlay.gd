@@ -164,7 +164,7 @@ func test_link_banners_come_and_go_with_the_link_state() -> void:
 	var made: Array = _made(false)
 	var overlay: PresenceOverlay = made[0]
 	var controller: FakeController = made[1]
-	var panel: Control = overlay.link_label.get_parent()
+	var panel: Control = overlay.link_panel
 	assert_false(panel.visible)
 	controller.link_changed.emit(Transport.LINK_HOST_AWAY)
 	assert_true(panel.visible)

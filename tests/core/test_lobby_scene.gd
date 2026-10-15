@@ -456,7 +456,7 @@ func test_panel_grows_with_the_window_but_stays_within_bounds() -> void:
 	var small_w: float = (small[1] as LobbyScene).panel.size.x
 	var large_w: float = (large[1] as LobbyScene).panel.size.x
 	assert_gt(large_w, small_w)
-	assert_lte(large_w, 760.0 + 2.0 * Tokens.SPACE_L + 1.0)
+	assert_lte(large_w, 1000.0 + 2.0 * Tokens.SPACE_L + 1.0)  # the start screen card is 1000 wide at most
 
 
 func test_layout_follows_a_window_resize_in_both_directions() -> void:

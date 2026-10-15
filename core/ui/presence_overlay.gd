@@ -32,6 +32,10 @@ var continued_panel: PanelContainer
 var continued_label: Label
 var wait_again_button: Button
 var link_label: Label
+var link_panel: Control
+var link_dots: BouncingDots
+var lost_badge: Label
+var pause_dots: BouncingDots
 ## The "disconnected" card.
 var lost_layer: Control
 var lost_title: Label
@@ -69,10 +73,10 @@ func is_blocking() -> bool:
 
 func _build_banners() -> void:
 	banner_box = VBoxContainer.new()
-	banner_box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE)
+	banner_box.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)  # the banners sit centred along the top
 	banner_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	banner_box.add_theme_constant_override("separation", Tokens.SPACE_S)
-	banner_box.position.y = Tokens.SPACE_M
+	banner_box.offset_top = Tokens.SPACE_M
 	add_child(banner_box)
 
 	continued_panel = PanelContainer.new()
@@ -86,15 +90,24 @@ func _build_banners() -> void:
 	wait_again_button.theme_type_variation = "CreamButton"
 	wait_again_button.pressed.connect(func() -> void: controller.wait_again())
 	continued_row.add_child(wait_again_button)
+	continued_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	banner_box.add_child(continued_panel)
 
-	var link_panel: PanelContainer = PanelContainer.new()
-	link_panel.add_theme_stylebox_override("panel", _banner_style(Tokens.INDIGO))
+	var link_card: PaperCard = PaperCard.new()
+	link_card.back_color = Tokens.SAFFRON
+	link_card.back_offset = Vector2(6, 8)
+	var link_row: HBoxContainer = HBoxContainer.new()
+	link_row.add_theme_constant_override("separation", Tokens.SPACE_M)
+	link_card.add_child(link_row)
+	link_dots = BouncingDots.new()
+	link_row.add_child(link_dots)
 	link_label = Label.new()
-	link_label.add_theme_color_override("font_color", Tokens.PAPER_CREAM)
-	link_panel.add_child(link_label)
+	link_label.add_theme_color_override("font_color", Tokens.INDIGO)
+	link_row.add_child(link_label)
+	link_panel = link_card
 	link_panel.set_meta("is_link_panel", true)
-	banner_box.add_child(link_panel)
+	link_card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	banner_box.add_child(link_card)
 
 
 func _build_pause_layer() -> Control:
@@ -110,6 +123,9 @@ func _build_pause_layer() -> Control:
 	box.custom_minimum_size = Vector2(380, 0)
 	box.add_theme_constant_override("separation", Tokens.SPACE_S)
 	card.add_child(box)
+	pause_dots = BouncingDots.new()
+	pause_dots.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(pause_dots)
 	pause_title = _title("Game paused")
 	box.add_child(pause_title)
 	pause_body = Label.new()
@@ -150,6 +166,22 @@ func _build_lost_layer() -> Control:
 	box.custom_minimum_size = Vector2(380, 0)
 	box.add_theme_constant_override("separation", Tokens.SPACE_S)
 	card.add_child(box)
+	lost_badge = Label.new()
+	lost_badge.text = "!"
+	lost_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lost_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lost_badge.custom_minimum_size = Vector2(80, 80)
+	lost_badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	lost_badge.add_theme_font_size_override("font_size", 52)
+	lost_badge.add_theme_color_override("font_color", Tokens.PAPER_CREAM)
+	var badge_style: StyleBoxFlat = StyleBoxFlat.new()
+	badge_style.bg_color = Tokens.ROSE
+	badge_style.set_corner_radius_all(40)
+	badge_style.shadow_color = Color(Tokens.INK, 0.3)
+	badge_style.shadow_size = 4
+	badge_style.shadow_offset = Vector2(2, 4)
+	lost_badge.add_theme_stylebox_override("normal", badge_style)
+	box.add_child(lost_badge)
 	lost_title = _title("Disconnected")
 	box.add_child(lost_title)
 	lost_body = Label.new()
@@ -240,7 +272,6 @@ func _refresh() -> void:
 	if continued_panel.visible:
 		continued_label.text = "Waiting for %s is off: play continues." % _names(away)
 
-	var link_panel: Control = link_label.get_parent()
 	link_panel.visible = _link != Transport.LINK_OK and _lost.is_empty()
 	match _link:
 		Transport.LINK_HOST_AWAY:

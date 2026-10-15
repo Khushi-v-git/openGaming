@@ -30,6 +30,8 @@ var rematch_button: Button
 var lobby_button: Button
 var overlay_wait_label: Label
 var overlay_menu_button: Button
+var medallion: PawnMedallion
+var confetti: Confetti
 var player_rows: Dictionary = {}  # player_id -> {panel, square}
 
 ## Animation speed multiplier: always 1 in play. set_speed_by_label() exists for tests and tools.
@@ -196,6 +198,9 @@ func _build_overlay() -> void:
 	dim.color = Color(Tokens.INK, 0.5)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(dim)
+	confetti = Confetti.new()
+	confetti.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(confetti)
 	var center: CenterContainer = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(center)
@@ -204,17 +209,21 @@ func _build_overlay() -> void:
 	card.back_offset = Vector2(10, 12)
 	center.add_child(card)
 	var box: VBoxContainer = VBoxContainer.new()
-	box.custom_minimum_size = Vector2(340, 0)
+	box.custom_minimum_size = Vector2(380, 0)
+	box.add_theme_constant_override("separation", 6)
 	card.add_child(box)
-	var crown: TextureRect = TextureRect.new()
-	crown.texture = load(ClimbArt.CROWN_PATH)
-	crown.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	crown.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	crown.custom_minimum_size = Vector2(0, 72)
-	box.add_child(crown)
+	var caption: Label = Label.new()
+	caption.text = "Game over"
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
+	caption.add_theme_color_override("font_color", Tokens.INDIGO)
+	box.add_child(caption)
+	medallion = PawnMedallion.new()
+	medallion.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(medallion)
 	overlay_title = Label.new()
 	overlay_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	overlay_title.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
+	overlay_title.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE - 2)
 	overlay_title.add_theme_color_override("font_color", Tokens.INDIGO)
 	box.add_child(overlay_title)
 	rematch_button = Button.new()
@@ -232,9 +241,26 @@ func _build_overlay() -> void:
 	box.add_child(overlay_wait_label)
 	overlay_menu_button = Button.new()
 	overlay_menu_button.text = "Back to menu"
+	overlay_menu_button.theme_type_variation = "CreamButton"
 	overlay_menu_button.pressed.connect(func() -> void: leave_requested.emit())
 	box.add_child(overlay_menu_button)
 	add_child(overlay)
+
+
+## The player's colour as the paper-cut palette has it.
+static func _tint_of(view: Dictionary, player_id: String) -> Color:
+	for entry: Dictionary in view.get("players", []):
+		if entry["player_id"] == player_id:
+			match str(entry["color"]):
+				"red":
+					return Tokens.PLAYER_RED
+				"blue":
+					return Tokens.PLAYER_BLUE
+				"green":
+					return Tokens.PLAYER_GREEN
+				"yellow":
+					return Tokens.PLAYER_YELLOW
+	return Tokens.SAFFRON
 
 
 # --- connecting to the game --------------------------------------------------------------------------
@@ -408,6 +434,8 @@ func _update_overlay() -> void:
 	if finished:
 		var winner: String = controller.rules().winner(_view)
 		overlay_title.text = "%s wins!" % str(names.get(winner, winner))
+		medallion.color = _tint_of(_view, winner)
+		confetti.reseed(hash(winner) & 0xFFFF)
 		var hotseat: bool = controller.local_player_id() == ""
 		var is_host: bool = controller.can_rematch()
 		rematch_button.visible = is_host

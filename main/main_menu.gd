@@ -11,6 +11,9 @@ extends Control
 ## Command-line options (see LaunchOptions) can open the host or join lobby by themselves.
 
 signal game_started(game_id: String)
+signal quit_requested()
+
+const TITLE_SIZE: int = 76
 
 const MAX_NAME_LENGTH: int = 20
 
@@ -23,6 +26,9 @@ var launch_options: Dictionary = {}
 var use_command_line: bool = true
 var game_list: VBoxContainer
 var join_button: Button
+var quit_button: Button
+## Whether Quit really closes the app. Tests turn it off and watch `quit_requested` instead.
+var quit_on_request: bool = true
 var setup_panel: Control
 var error_label: Label
 
@@ -35,6 +41,8 @@ var _settings_node: Node
 var _menu_root: Control
 var _game_node: Control
 var _title_label: Label
+var _title_block: Control
+var _bottom_row: Control
 
 var _lobby: LobbyScene = null
 var _net: Dictionary = {}  # the running networked game: {screen, controller}
@@ -94,39 +102,83 @@ func _build() -> void:
 	_menu_root = CenterContainer.new()
 	_menu_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_menu_root)
-	var panel: PaperCard = PaperCard.new()
-	panel.back_color = Tokens.DEEP_TEAL
-	panel.back_offset = Vector2(10, 12)
-	panel.custom_minimum_size = Vector2(520, 0)
-	_menu_root.add_child(panel)
 	var column: VBoxContainer = VBoxContainer.new()
-	panel.add_child(column)
+	column.add_theme_constant_override("separation", 14)
+	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	_menu_root.add_child(column)
 
-	_title_label = Label.new()
-	_title_label.text = "onlyGaming"
-	_title_label.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE + 8)
-	_title_label.add_theme_color_override("font_color", Tokens.INDIGO)
-	column.add_child(_title_label)
+	_title_block = _build_title("onlyGaming")
+	column.add_child(_title_block)
 
+	game_list = VBoxContainer.new()
+	game_list.alignment = BoxContainer.ALIGNMENT_CENTER
+	game_list.add_theme_constant_override("separation", 18)
+	game_list.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	column.add_child(game_list)
+
+	var setup_card: PaperCard = PaperCard.new()
+	setup_card.back_color = Tokens.INDIGO
+	setup_card.back_offset = Vector2(10, 12)
+	setup_card.custom_minimum_size = Vector2(560, 0)
+	setup_card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	setup_card.visible = false
+	var setup_box: VBoxContainer = VBoxContainer.new()
+	setup_card.add_child(setup_box)
+	column.add_child(setup_card)
+	setup_panel = setup_card
+	_build_setup(setup_box)
+
+	var bottom: HBoxContainer = HBoxContainer.new()
+	bottom.alignment = BoxContainer.ALIGNMENT_CENTER
+	bottom.add_theme_constant_override("separation", 20)
+	_bottom_row = bottom
+	column.add_child(bottom)
 	join_button = Button.new()
 	join_button.name = "JoinButton"
 	join_button.text = "Join game"
+	join_button.custom_minimum_size = Vector2(220, 0)
 	join_button.pressed.connect(open_join_lobby)
-	column.add_child(join_button)
-
-	game_list = VBoxContainer.new()
-	column.add_child(game_list)
-
-	setup_panel = VBoxContainer.new()
-	setup_panel.visible = false
-	column.add_child(setup_panel)
-	_build_setup(setup_panel as VBoxContainer)
+	bottom.add_child(join_button)
+	quit_button = Button.new()
+	quit_button.name = "QuitButton"
+	quit_button.text = "Quit"
+	quit_button.theme_type_variation = "CreamButton"
+	quit_button.custom_minimum_size = Vector2(160, 0)
+	quit_button.pressed.connect(request_quit)
+	bottom.add_child(quit_button)
 
 	error_label = Label.new()
 	error_label.add_theme_color_override("font_color", Tokens.TERRACOTTA)
 	error_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	error_label.custom_minimum_size = Vector2(520, 0)
 	error_label.visible = false
 	column.add_child(error_label)
+
+
+## Big Fredoka title in indigo with a saffron paper-cut shadow copy behind it, as in the design.
+func _build_title(text: String) -> Control:
+	var stack: MarginContainer = MarginContainer.new()
+	stack.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var shadow_layer: MarginContainer = MarginContainer.new()
+	shadow_layer.add_theme_constant_override("margin_left", 5)
+	shadow_layer.add_theme_constant_override("margin_top", 6)
+	var shadow: Label = Label.new()
+	shadow.text = text
+	shadow.add_theme_font_size_override("font_size", TITLE_SIZE)
+	shadow.add_theme_color_override("font_color", Tokens.SAFFRON)
+	shadow_layer.add_child(shadow)
+	stack.add_child(shadow_layer)
+	var front_layer: MarginContainer = MarginContainer.new()
+	front_layer.add_theme_constant_override("margin_right", 5)
+	front_layer.add_theme_constant_override("margin_bottom", 6)
+	_title_label = Label.new()
+	_title_label.text = text
+	_title_label.add_theme_font_size_override("font_size", TITLE_SIZE)
+	_title_label.add_theme_color_override("font_color", Tokens.INDIGO)
+	front_layer.add_child(_title_label)
+	stack.add_child(front_layer)
+	return stack
 
 
 func _build_setup(box: VBoxContainer) -> void:
@@ -166,31 +218,57 @@ func show_game_list() -> void:
 	_selected_id = ""
 	setup_panel.visible = false
 	game_list.visible = true
-	join_button.visible = true
+	_bottom_row.visible = true
+	_title_block.visible = true
 	_menu_root.visible = true
 	_set_error("")
 	for child: Node in game_list.get_children():
 		game_list.remove_child(child)
 		child.queue_free()
+	var index: int = 0
 	for manifest: Dictionary in registry.playable():
-		game_list.add_child(_game_card(manifest))
+		game_list.add_child(_game_card(manifest, index))
+		index += 1
 
 
-## One game: its name and description, and the three ways to play it.
-func _game_card(manifest: Dictionary) -> Control:
-	var card: VBoxContainer = VBoxContainer.new()
+## One game: a paper card with its badge, name, player count and the three ways to play it.
+func _game_card(manifest: Dictionary, index: int = 0) -> Control:
+	var card: PaperCard = PaperCard.new()
 	card.set_meta("game_id", manifest["id"])
+	card.back_color = [Tokens.DEEP_TEAL, Tokens.TERRACOTTA, Tokens.INDIGO, Tokens.ROSE][posmod(index, 4)]
+	card.back_offset = Vector2(10, 12)
+	card.custom_minimum_size = Vector2(430, 0)
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var box: VBoxContainer = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	card.add_child(box)
+	var badge: GameBadge = GameBadge.new()
+	badge.name = "Badge"
+	badge.use_palette(index)
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(badge)
 	var title: Label = Label.new()
 	title.name = "Title"
 	title.text = str(manifest["display_name"])
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", Tokens.FONT_SIZE_TITLE)
 	title.add_theme_color_override("font_color", Tokens.INDIGO)
-	card.add_child(title)
+	box.add_child(title)
+	var players: Label = Label.new()
+	players.name = "Players"
+	players.text = _players_text(int(manifest["min_players"]), int(manifest["max_players"]))
+	players.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	players.add_theme_font_size_override("font_size", Tokens.FONT_SIZE - 2)
+	box.add_child(players)
 	var description: Label = Label.new()
 	description.name = "Description"
 	description.text = str(manifest["description"])
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	card.add_child(description)
+	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	description.custom_minimum_size = Vector2(370, 0)
+	description.add_theme_font_size_override("font_size", Tokens.FONT_SIZE - 5)
+	description.add_theme_color_override("font_color", Color(Tokens.INK, 0.8))
+	box.add_child(description)
 	var row: HBoxContainer = HBoxContainer.new()
 	var host_button: Button = _pill("HostButton", "Host game", "PrimaryButton")
 	host_button.pressed.connect(func() -> void: open_host_lobby(manifest["id"]))
@@ -198,11 +276,24 @@ func _game_card(manifest: Dictionary) -> Control:
 	var join: Button = _pill("JoinGameButton", "Join game", "")
 	join.pressed.connect(open_join_lobby)
 	row.add_child(join)
+	box.add_child(row)
 	var hotseat: Button = _pill("HotseatButton", "Play on this computer", "CreamButton")
 	hotseat.pressed.connect(func() -> void: choose_game(manifest["id"]))
-	row.add_child(hotseat)
-	card.add_child(row)
+	box.add_child(hotseat)
 	return card
+
+
+## "2-4 players", "2 players", "1 player".
+static func _players_text(min_players: int, max_players: int) -> String:
+	if min_players == max_players:
+		return "%d player%s" % [min_players, "" if min_players == 1 else "s"]
+	return "%d-%d players" % [min_players, max_players]
+
+
+func request_quit() -> void:
+	quit_requested.emit()
+	if quit_on_request:
+		get_tree().quit()
 
 
 func _pill(button_name: String, text: String, variation: String) -> Button:
@@ -224,10 +315,11 @@ func choose_game(game_id: String) -> void:
 	_selected_id = game_id
 	var manifest: Dictionary = registry.get_manifest(game_id)
 	game_list.visible = false
-	join_button.visible = false
+	_bottom_row.visible = false
+	_title_block.visible = false
 	setup_panel.visible = true
 	_set_error("")
-	(setup_panel.get_node("Heading") as Label).text = "%s: play on this computer" % manifest["display_name"]
+	(setup_panel.find_child("Heading", true, false) as Label).text = "%s: play on this computer" % manifest["display_name"]
 	_count_picker.clear()
 	for count: int in range(int(manifest["min_players"]), int(manifest["max_players"]) + 1):
 		_count_picker.add_item(str(count), count)

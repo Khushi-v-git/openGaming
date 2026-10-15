@@ -7,9 +7,9 @@ extends SceneTree
 ## The host is drawn on the main window, the guest in an off-screen viewport of the same size.
 
 const GAME: String = "climb_and_slither"
-const PORT: int = 24987
 
 var _out: String = "."
+var _port: int = 0
 var _host_menu: MainMenu
 var _guest_menu: MainMenu
 var _guest_viewport: SubViewport
@@ -54,10 +54,19 @@ func _save_guest(name: String) -> void:
 	_guest_viewport.get_texture().get_image().save_png("%s/%s-guest-%s.png" % [_out, name, _size_tag()])
 
 
+## A free port chosen by the OS, so two runs back to back never fight over one.
+func _free_port() -> int:
+	var probe: TCPServer = TCPServer.new()
+	probe.listen(0, "127.0.0.1")
+	var port: int = probe.get_local_port()
+	probe.stop()
+	return port
+
+
 func _config() -> Dictionary:
 	return {
 		"transport": "auto", "host_via": "direct", "relay_url": "wss://my-relay.example.workers.dev",
-		"port": PORT, "bind_address": "127.0.0.1", "connection_ui": true,
+		"port": _port, "bind_address": "127.0.0.1", "connection_ui": true,
 	}
 
 
@@ -72,6 +81,7 @@ func _make_menu(parent: Node) -> MainMenu:
 func _run() -> void:
 	await _frames()  # the window has its real size only after the first frame
 	AppSettings.set_host_via("direct")
+	_port = _free_port()
 	_host_menu = _make_menu(get_root())
 	_guest_viewport = SubViewport.new()
 	_guest_viewport.size = get_root().size
@@ -87,6 +97,7 @@ func _run() -> void:
 	host_lobby.host_session()
 	if not await _until(func() -> bool: return host_lobby.shared_address != ""):
 		push_error("hosting never went live")
+		OS.set_exit_code(1)
 		return
 	var guest_lobby: LobbyScene = _guest_menu.open_join_lobby()
 	guest_lobby.name_edit.text = "Ben"
@@ -94,6 +105,7 @@ func _run() -> void:
 	guest_lobby.join_session()
 	if not await _until(func() -> bool: return guest_lobby.lobby_view.visible and host_lobby.players_box.get_child_count() == 2):
 		push_error("the guest never joined")
+		OS.set_exit_code(1)
 		return
 	guest_lobby.ready_button.button_pressed = true
 	await _until(func() -> bool: return not host_lobby.start_button.disabled)
@@ -103,6 +115,7 @@ func _run() -> void:
 	host_lobby.start_button.pressed.emit()
 	if not await _until(func() -> bool: return _host_menu.in_network_game() and _guest_menu.in_network_game()):
 		push_error("the game never started")
+		OS.set_exit_code(1)
 		return
 	var host_screen: ClimbGameScreen = _host_menu.network_screen()
 	var guest_screen: ClimbGameScreen = _guest_menu.network_screen()

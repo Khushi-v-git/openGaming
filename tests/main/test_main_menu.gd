@@ -24,7 +24,7 @@ func test_the_game_list_comes_from_the_registry() -> void:
 		ids.append(card.get_meta("game_id"))
 	assert_true(ids.has("climb_and_slither"))
 	assert_eq(ids.size(), menu.registry.playable().size())
-	assert_eq((menu.game_list.get_child(0).get_node("Title") as Label).text, "Climb and Slither")
+	assert_eq((menu.game_list.get_child(0).find_child("Title", true, false) as Label).text, "Climb and Slither")
 
 
 func test_each_game_card_offers_host_join_and_hot_seat() -> void:
@@ -129,3 +129,61 @@ func test_the_project_opens_the_main_scene_at_1280_by_720() -> void:
 	assert_eq(ProjectSettings.get_setting("display/window/size/viewport_width"), 1280)
 	assert_eq(ProjectSettings.get_setting("display/window/size/viewport_height"), 720)
 	assert_not_null(load("res://main/main.tscn"))
+
+
+# --- the home screen's look ---------------------------------------------------------------------------------
+
+func test_each_game_card_has_a_badge_a_name_and_a_player_count() -> void:
+	var menu: MainMenu = await _menu()
+	var card: Node = menu.game_list.get_child(0)
+	assert_true(card is PaperCard, "a cream card with a coloured card behind it")
+	assert_not_null(card.find_child("Badge", true, false) as GameBadge)
+	assert_eq((card.find_child("Players", true, false) as Label).text, "2-4 players")
+
+
+func test_the_player_count_line_reads_naturally() -> void:
+	assert_eq(MainMenu._players_text(2, 4), "2-4 players")
+	assert_eq(MainMenu._players_text(2, 2), "2 players")
+	assert_eq(MainMenu._players_text(1, 1), "1 player")
+
+
+func test_the_title_has_its_shadow_copy_and_hides_with_the_menu_while_setting_up() -> void:
+	var menu: MainMenu = await _menu()
+	assert_true(menu._title_block.visible)
+	var labels: Array = menu._title_block.find_children("*", "Label", true, false)
+	assert_eq(labels.size(), 2, "a saffron shadow copy behind the indigo title")
+	menu.choose_game("climb_and_slither")
+	assert_false(menu._title_block.visible, "the setup card needs the room")
+	assert_false(menu._bottom_row.visible)
+	menu.show_game_list()
+	assert_true(menu._title_block.visible)
+	assert_true(menu._bottom_row.visible)
+
+
+func test_the_setup_panel_is_a_paper_card() -> void:
+	var menu: MainMenu = await _menu()
+	assert_true(menu.setup_panel is PaperCard)
+
+
+func test_quit_asks_to_quit_without_closing_the_test_run() -> void:
+	var menu: MainMenu = await _menu()
+	menu.quit_on_request = false
+	var asked: Array = [0]
+	menu.quit_requested.connect(func() -> void: asked[0] += 1)
+	menu.quit_button.pressed.emit()
+	assert_eq(asked[0], 1)
+	assert_true(is_instance_valid(menu))
+
+
+func test_the_home_screen_fits_a_1280_by_720_window() -> void:
+	var menu: MainMenu = await _menu()
+	await get_tree().process_frame
+	var column: Control = menu._title_block.get_parent()
+	assert_lte(column.size.y, 720.0, "the home column fits the window height")
+	assert_gte(column.global_position.y, 0.0)
+	menu.choose_game("climb_and_slither")
+	menu.set_player_count(4)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var card: Control = menu.setup_panel
+	assert_lte(card.size.y, 720.0, "the hot-seat setup with four players fits too")

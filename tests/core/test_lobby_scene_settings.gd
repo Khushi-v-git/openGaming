@@ -82,7 +82,7 @@ func test_the_host_gets_the_games_own_settings_panel_in_the_lobby() -> void:
 	assert_not_null(host.settings_panel)
 	assert_true(host.settings_panel is ClimbSettingsPanel)
 	assert_true(host.settings_box.visible)
-	assert_false(host.house_rules_label.visible, "hosts see the interactive panel, not the summary")
+	assert_false(host.house_rules_box.visible, "hosts see the interactive panel, not the summary")
 
 
 func test_the_settings_are_sent_once_hosting_is_live_so_guests_always_see_them() -> void:
@@ -92,7 +92,8 @@ func test_the_settings_are_sent_once_hosting_is_live_so_guests_always_see_them()
 	var guest: LobbyScene = _scene("Asha", _loopback())
 	await _join(guest, host)
 	assert_false(guest.settings_box.visible)
-	assert_true(guest.house_rules_label.visible)
+	assert_true(guest.house_rules_box.visible)
+	assert_eq(guest.house_rules_box.get_child_count(), 1, "one line with a leaf bullet")
 	assert_eq(guest.house_rules_label.text, "House rules: One die")
 
 
@@ -135,7 +136,7 @@ func test_without_a_registry_there_is_no_panel_and_no_summary() -> void:
 	assert_false(host.settings_box.visible)
 	var guest: LobbyScene = _scene("Asha", _loopback(), false)
 	await _join(guest, host)
-	assert_false(guest.house_rules_label.visible)
+	assert_false(guest.house_rules_box.visible)
 
 
 func test_describe_settings_words_the_climb_rules() -> void:
