@@ -7,11 +7,13 @@ var hub: LoopbackHub
 func before_each() -> void:
 	hub = LoopbackHub.new()
 	MessageLog.enabled = false
+	ConfirmDialog.auto_confirm = true  # these tests press Leave and Remove and expect it done (the questions have their own tests)
 
 
 func after_each() -> void:
 	await get_tree().process_frame  # rows the scene queued for freeing are gone before the orphan check
 	MessageLog.enabled = OS.is_debug_build()
+	ConfirmDialog.auto_confirm = false
 
 
 func _make_scene(player_name: String, extra: Dictionary = {}) -> LobbyScene:

@@ -94,11 +94,12 @@ func test_rows_are_pills_with_a_pawn_a_crown_for_the_host_and_a_check_when_ready
 	assert_gte(host_row.custom_minimum_size.y, 52.0)
 	var status: Label = host_row.get_child(1)
 	assert_eq(status.text, "Ready")
-	assert_eq(status.get_child_count(), 1, "a check mark before Ready")
+	assert_eq(status.get_child_count(), 1, "a dot before Ready")
+	assert_true((status.get_child(0) as ChipDot).ready_mark, "with a check in it")
 	var guest_row: PaperRow = host.players_box.get_child(1)
 	assert_eq((guest_row.get_child(0) as Label).get_child_count(), 1, "a pawn, no crown")
 	assert_eq((guest_row.get_child(1) as Label).text, "Not ready")
-	assert_eq((guest_row.get_child(1) as Label).get_child_count(), 0, "no check until ready")
+	assert_false(((guest_row.get_child(1) as Label).get_child(0) as ChipDot).ready_mark, "an empty dot, no check, until ready")
 
 
 # --- the guest's side ------------------------------------------------------------------------------------------------

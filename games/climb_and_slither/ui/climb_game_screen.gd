@@ -44,7 +44,6 @@ var _step_index: int = 0
 var _run_id: int = 0
 var _ready_built: bool = false
 var _pending_setup: bool = false
-var _leave_dialog: ConfirmationDialog
 var _last_error: String = ""
 var _players_box: VBoxContainer
 var _margin: MarginContainer
@@ -165,10 +164,6 @@ func _build() -> void:
 	presence_overlay.leave_requested.connect(func() -> void: leave_requested.emit())
 	add_child(presence_overlay)
 	_build_overlay()
-	_leave_dialog = ConfirmationDialog.new()
-	_leave_dialog.dialog_text = "Leave this game? Its progress will be lost."
-	_leave_dialog.confirmed.connect(func() -> void: leave_requested.emit())
-	add_child(_leave_dialog)
 	resized.connect(_fit)
 	_fit()
 	_update_controls()
@@ -463,10 +458,21 @@ func set_speed_by_label(label: String) -> void:
 		skip()
 
 
+## The menu button asks first while a game is running (design section 13); a finished game just leaves.
 func _on_menu_pressed() -> void:
-	if not _view.is_empty() and not controller.rules().is_finished(_view):
-		_leave_dialog.popup_centered()
-	else:
+	if _view.is_empty() or controller.rules().is_finished(_view):
+		leave_requested.emit()
+		return
+	var hotseat: bool = controller.local_player_id() == ""
+	var host: bool = not hotseat and controller.can_rematch()
+	var question: Dictionary = ConfirmDialog.leave_hotseat() if hotseat else (ConfirmDialog.end_game_for_all() if host else ConfirmDialog.leave_game())
+	ConfirmDialog.ask(self, question, _on_leave_choice)
+
+
+func _on_leave_choice(id: String) -> void:
+	if id == "lobby":
+		controller.end_game()
+	elif id == "leave" or id == "close":
 		leave_requested.emit()
 
 

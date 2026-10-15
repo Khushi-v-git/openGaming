@@ -127,6 +127,9 @@ func test_the_host_can_remove_the_absent_player_from_the_overlay() -> void:
 	var remove: Button = screens[0].presence_overlay.remove_box.get_child(0)
 	assert_eq(remove.text, "Remove Guest3 for good")
 	remove.pressed.emit()
+	var question: ConfirmDialog = _question_on_overlay(screens[0])
+	assert_eq(question.title_label.text, "Remove Guest3 for good?")
+	question.buttons[1].pressed.emit()  # Remove
 	assert_true(await _until(func() -> bool: return not screens[0].presence_overlay.pause_layer.visible))
 	assert_false(screens[0].roll_button.disabled)
 
@@ -187,3 +190,60 @@ func test_a_guest_who_loses_the_session_gets_the_disconnected_card_and_a_way_out
 	assert_true(await _until(func() -> bool: return screens[1].presence_overlay.lost_layer.visible))
 	screens[1].presence_overlay.lost_button.pressed.emit()
 	assert_eq(left[0], 1)
+
+
+# --- leaving asks first (design section 13) -------------------------------------------------------------------
+
+func _question_on(screen: ClimbGameScreen) -> ConfirmDialog:
+	for child: Node in screen.get_children():
+		if child is ConfirmDialog and not child.is_queued_for_deletion():
+			return child
+	return null
+
+
+func test_a_guest_leaving_a_running_game_is_asked_and_stay_keeps_them_in() -> void:
+	await _seat(2)
+	var left: Array = [0]
+	screens[1].leave_requested.connect(func() -> void: left[0] += 1)
+	screens[1].menu_button.pressed.emit()
+	var dialog: ConfirmDialog = _question_on(screens[1])
+	assert_eq(dialog.title_label.text, "Leave this game?")
+	assert_eq(dialog.body_label.text, "Your seat is kept for a while, so you can rejoin.")
+	dialog.buttons[0].pressed.emit()
+	assert_eq(left[0], 0)
+	screens[1].menu_button.pressed.emit()
+	_question_on(screens[1]).buttons[1].pressed.emit()
+	assert_eq(left[0], 1)
+
+
+func test_the_host_is_offered_back_to_lobby_and_close_room_with_keep_playing_first() -> void:
+	await _seat(2)
+	var left: Array = [0]
+	screens[0].leave_requested.connect(func() -> void: left[0] += 1)
+	screens[0].menu_button.pressed.emit()
+	var dialog: ConfirmDialog = _question_on(screens[0])
+	assert_eq(dialog.title_label.text, "End the game for everyone?")
+	assert_eq(dialog.buttons.map(func(b: Button) -> String: return b.text), ["Keep playing", "Back to lobby", "Close room"])
+	dialog.buttons[0].pressed.emit()
+	assert_eq(left[0], 0)
+	assert_true(table.host.is_running())
+	screens[0].menu_button.pressed.emit()
+	_question_on(screens[0]).buttons[1].pressed.emit()  # Back to lobby
+	assert_true(await table.until(func() -> bool: return ended[1] == 1 and ended[2] == 1))
+	assert_eq(left[0], 0, "going back to the lobby does not close the room")
+
+
+func test_the_host_choosing_close_room_leaves() -> void:
+	await _seat(2)
+	var left: Array = [0]
+	screens[0].leave_requested.connect(func() -> void: left[0] += 1)
+	screens[0].menu_button.pressed.emit()
+	_question_on(screens[0]).buttons[2].pressed.emit()
+	assert_eq(left[0], 1)
+
+
+func _question_on_overlay(screen: ClimbGameScreen) -> ConfirmDialog:
+	for child: Node in screen.presence_overlay.get_children():
+		if child is ConfirmDialog and not child.is_queued_for_deletion():
+			return child
+	return null

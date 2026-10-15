@@ -50,6 +50,21 @@ static func small_button(button: Button, variation: StringName = &"CreamButton")
 	button.add_theme_font_size_override("font_size", 17)
 
 
+## The host's "Start game" pill: the same size family as the guest's ready pill. When it cannot be
+## pressed yet it is a washed-out, grey-leaning terracotta (the design's 45% and greyscale).
+static func start_pill(button: Button) -> void:
+	button.theme_type_variation = &"PrimaryButton"
+	button.custom_minimum_size = Vector2(260.0, 64.0)
+	button.add_theme_font_size_override("font_size", 28)
+	var washed: StyleBoxFlat = (button.get_theme_stylebox("disabled", "PrimaryButton").duplicate() as StyleBoxFlat) if button.has_theme_stylebox("disabled", "PrimaryButton") else StyleBoxFlat.new()
+	washed.bg_color = Tokens.TERRACOTTA.lerp(Color(0.62, 0.6, 0.58), 0.62).lerp(Tokens.PAPER_CREAM, 0.25)
+	washed.set_corner_radius_all(40)
+	washed.content_margin_left = Tokens.SPACE_L
+	washed.content_margin_right = Tokens.SPACE_L
+	button.add_theme_stylebox_override("disabled", washed)
+	button.add_theme_color_override("font_disabled_color", Color(Tokens.PAPER_CREAM, 0.85))
+
+
 ## A text field that looks pressed into the paper (the design's inset fields): a darker cream
 ## well with a darker top and left edge, where the shadow falls.
 static func inset_field(field: LineEdit, font_size: int = 20) -> void:

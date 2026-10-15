@@ -67,7 +67,8 @@ var claims_box: VBoxContainer  # host only: returning players waiting to be let 
 var notice_label: Label  # "Waiting for X to come back."
 var continue_button: Button  # host only, while paused: continue without waiting
 var wait_button: Button  # host only, after continuing: wait for the absent player again
-var ready_button: CheckButton
+var ready_button: ReadyPill
+var ready_caption: Label  # "Tap again if you need a moment", only while ready
 var start_button: Button
 var leave_button: Button
 var lobby_status_label: Label
@@ -373,15 +374,18 @@ func _build_lobby_view() -> Control:
 	left.add_child(empty_seats_box)
 	claims_box = VBoxContainer.new()
 	left.add_child(claims_box)
-	ready_button = CheckButton.new()
-	ready_button.text = "I'm ready"
-	ready_button.add_theme_font_size_override("font_size", 24)
+	ready_button = ReadyPill.new()
 	ready_button.toggled.connect(func(pressed: bool) -> void: _act({"type": "set_ready", "ready": pressed}))
-	var ready_row: PanelContainer = PanelContainer.new()
-	ready_row.add_theme_stylebox_override("panel", _row_box())
-	ready_row.add_child(ready_button)
-	ready_card = ready_row
-	left.add_child(ready_row)
+	var ready_box: VBoxContainer = VBoxContainer.new()
+	ready_box.add_theme_constant_override("separation", 6)
+	ready_box.add_child(ready_button)
+	ready_caption = _label("Tap again if you need a moment")
+	ready_caption.add_theme_font_size_override("font_size", 18)
+	ready_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ready_caption.visible = false
+	ready_box.add_child(ready_caption)
+	ready_card = ready_box
+	left.add_child(ready_box)
 
 	# --- right: share + house rules ---
 	var right: VBoxContainer = VBoxContainer.new()
@@ -482,7 +486,7 @@ func _build_lobby_view() -> Control:
 	leave_button.text = "Leave"
 	leave_button.theme_type_variation = &"CreamButton"
 	leave_button.custom_minimum_size.x = 150.0
-	leave_button.pressed.connect(leave)
+	leave_button.pressed.connect(ask_to_leave)
 	actions.add_child(leave_button)
 	var spacer: Control = Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -493,7 +497,7 @@ func _build_lobby_view() -> Control:
 	start_button = Button.new()
 	start_button.text = "Start game"
 	start_button.theme_type_variation = &"PrimaryButton"
-	start_button.custom_minimum_size.x = 230.0
+	PaperStyle.start_pill(start_button)
 	start_button.pressed.connect(func() -> void: _act({"type": "start"}))
 	actions.add_child(start_button)
 	box.add_child(actions)
@@ -612,6 +616,17 @@ func cancel() -> void:
 		_host.close_now()  # hosting is not live yet, nobody is in it; _on_host_closed returns us
 	elif _client != null:
 		_client.leave_now()  # _on_left returns us to the start view
+
+
+## The Leave button: asks first (design section 13). A guest only leaves; the host closes the
+## room for everyone.
+func ask_to_leave() -> void:
+	if _host == null and _client == null:
+		return
+	var question: Dictionary = ConfirmDialog.close_room() if _host != null else ConfirmDialog.leave_lobby()
+	ConfirmDialog.ask(self, question, func(id: String) -> void:
+		if id == "leave" or id == "close":
+			leave())
 
 
 func leave() -> void:
@@ -820,6 +835,7 @@ func _render() -> void:
 	ready_button.disabled = started
 	if started:
 		start_button.disabled = true
+	ready_caption.visible = not is_host and open and ready_button.button_pressed
 	_render_bottom_caption(is_host, open)
 	_update_title()
 
@@ -1062,20 +1078,7 @@ func _player_row(slot: Dictionary, my_id: String, is_host: bool, seat: int = 0) 
 		# the crown sits on the pawn's head
 		label.add_child(_icon("res://core/assets/icon-crown.svg", 12.0 + (height * 0.75 - 24.0) / 2.0, 24.0, -height * 0.36))
 	row.add_child(label)
-	var status: String = "Ready" if slot["ready"] else "Not ready"
-	if not slot["connected"]:
-		status = "Disconnected"
-	var pill: Label = _label(status)
-	var good: bool = slot["ready"] and slot["connected"]
-	var fill: Color = Tokens.FOREST_GREEN if good else (Tokens.ROSE if not slot["connected"] else Tokens.PAPER_CREAM.darkened(0.14))
-	PaperStyle.pill(pill, fill, Tokens.PAPER_CREAM if fill != Tokens.PAPER_CREAM.darkened(0.14) else Tokens.INK)
-	pill.add_theme_font_size_override("font_size", 19)
-	if good:  # a check in a cream dot before the word
-		var padded: StyleBoxFlat = pill.get_theme_stylebox("normal").duplicate() as StyleBoxFlat
-		padded.content_margin_left = 44
-		pill.add_theme_stylebox_override("normal", padded)
-		pill.add_child(_icon("res://core/assets/icon-check.svg", 8.0, 26.0))
-	row.add_child(pill)
+	row.add_child(_status_chip(slot, height))
 	var removable: bool = _state["phase"] == LobbyLogic.PHASE_OPEN or not slot["connected"]
 	if is_host and not is_host_slot and not slot["left"] and removable:
 		var kick: Button = Button.new()
@@ -1083,9 +1086,38 @@ func _player_row(slot: Dictionary, my_id: String, is_host: bool, seat: int = 0) 
 		kick.text = "Remove"
 		kick.custom_minimum_size.y = 38.0
 		var target: String = slot["player_id"]
-		kick.pressed.connect(func() -> void: _act({"type": "kick", "player_id": target}))
+		var shown_name: String = str(slot["name"])
+		var pawn_color: String = str(colors[seat]) if seat < colors.size() else ""
+		kick.pressed.connect(func() -> void:
+			ConfirmDialog.ask(self, ConfirmDialog.remove_player(shown_name, pawn_color), func(id: String) -> void:
+				if id == "remove":
+					_act({"type": "kick", "player_id": target})))
 		row.add_child(kick)
 	return row
+
+
+## The chip at the right of a row (design section 14): a green "Ready" with a check dot, a grey
+## "Not ready" with an empty dot, or a rose "Disconnected".
+func _status_chip(slot: Dictionary, row_height: float) -> Label:
+	var connected: bool = slot["connected"]
+	var is_ready: bool = slot["ready"] and connected
+	var chip: Label = _label("Ready" if is_ready else ("Not ready" if connected else "Disconnected"))
+	var fill: Color = Tokens.FOREST_GREEN if is_ready else (Color("#CFC7B2") if connected else Tokens.ROSE)
+	var text: Color = Tokens.PAPER_CREAM if (is_ready or not connected) else Color("#4F4B42")
+	PaperStyle.pill(chip, fill, text)
+	chip.add_theme_font_size_override("font_size", 22)
+	chip.custom_minimum_size.y = minf(52.0, row_height - 14.0)
+	if connected:
+		var padded: StyleBoxFlat = chip.get_theme_stylebox("normal").duplicate() as StyleBoxFlat
+		padded.content_margin_left = 50
+		padded.content_margin_right = 20
+		chip.add_theme_stylebox_override("normal", padded)
+		chip.custom_minimum_size.x = 176.0  # room for the dot and the longer "Not ready"
+		chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var dot: ChipDot = ChipDot.new(is_ready)
+		dot.position = Vector2(14.0, (chip.custom_minimum_size.y - ChipDot.DIAMETER) / 2.0)
+		chip.add_child(dot)
+	return chip
 
 
 ## A small picture pinned to the left of its parent label, vertically centred (plus `lift`).

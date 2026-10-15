@@ -104,6 +104,7 @@ func test_keep_waiting_changes_nothing() -> void:
 
 
 func test_continue_and_remove_call_the_controller() -> void:
+	ConfirmDialog.auto_confirm = true  # the question has its own test below
 	var made: Array = _made(true)
 	var overlay: PresenceOverlay = made[0]
 	var controller: FakeController = made[1]
@@ -111,6 +112,7 @@ func test_continue_and_remove_call_the_controller() -> void:
 	overlay.continue_button.pressed.emit()
 	(overlay.remove_box.get_child(1) as Button).pressed.emit()
 	assert_eq(controller.calls, [["continue"], ["remove", "b"]])
+	ConfirmDialog.auto_confirm = false
 
 
 func test_continue_is_disabled_with_a_reason_when_too_few_would_remain() -> void:
@@ -198,3 +200,25 @@ func test_a_lost_session_wins_over_a_pause() -> void:
 	controller.lost.emit({"code": "HOST_LOST", "message": "Lost connection to the host."})
 	assert_true(overlay.lost_layer.visible)
 	assert_false(overlay.pause_layer.visible)
+
+
+func test_removing_a_player_asks_first_and_keep_does_nothing() -> void:
+	ConfirmDialog.auto_confirm = false
+	var made: Array = _made(true)
+	var overlay: PresenceOverlay = made[0]
+	var controller: FakeController = made[1]
+	controller.change(_paused(["a", "b"]))
+	(overlay.remove_box.get_child(1) as Button).pressed.emit()
+	var dialog: ConfirmDialog = null
+	for child: Node in overlay.get_children():
+		if child is ConfirmDialog:
+			dialog = child
+	assert_not_null(dialog, "a question appears")
+	assert_string_contains(dialog.title_label.text, "Remove")
+	dialog.buttons[0].pressed.emit()  # Keep
+	assert_eq(controller.calls, [])
+	(overlay.remove_box.get_child(1) as Button).pressed.emit()
+	for child: Node in overlay.get_children():
+		if child is ConfirmDialog and not child.is_queued_for_deletion():
+			(child as ConfirmDialog).buttons[1].pressed.emit()  # Remove
+	assert_eq(controller.calls, [["remove", "b"]])

@@ -290,8 +290,23 @@ func _rebuild_remove_buttons(away: Array) -> void:
 		button.theme_type_variation = "CreamButton"
 		var id: String = str(entry["player_id"])
 		button.set_meta("player_id", id)
-		button.pressed.connect(func() -> void: controller.remove_player(id))
+		var shown_name: String = str(entry["name"])
+		var pawn_color: String = _pawn_color_of(id)
+		button.pressed.connect(func() -> void:
+			ConfirmDialog.ask(self, ConfirmDialog.remove_player(shown_name, pawn_color), func(choice: String) -> void:
+				if choice == "remove":
+					controller.remove_player(id)))
 		remove_box.add_child(button)
+
+
+## The colour of a player's pawn: seat order, red then blue, green, yellow.
+func _pawn_color_of(player_id: String) -> String:
+	var colors: Array = ["red", "blue", "green", "yellow"]
+	var seats: Array = controller.players()
+	for i: int in seats.size():
+		if str((seats[i] as Dictionary)["player_id"]) == player_id:
+			return str(colors[i]) if i < colors.size() else ""
+	return ""
 
 
 func _names(away: Array) -> String:

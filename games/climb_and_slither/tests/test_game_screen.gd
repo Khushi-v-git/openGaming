@@ -244,8 +244,13 @@ func test_leaving_a_running_game_asks_first_and_a_finished_one_does_not() -> voi
 	screen.leave_requested.connect(func() -> void: left[0] += 1)
 	screen.menu_button.pressed.emit()
 	assert_eq(left[0], 0, "a confirmation comes first")
-	assert_true(screen._leave_dialog.visible)
-	screen._leave_dialog.confirmed.emit()
+	var dialog: ConfirmDialog = _dialog_of(screen)
+	assert_not_null(dialog)
+	assert_eq(dialog.title_label.text, "Leave this game?")
+	dialog.buttons[0].pressed.emit()  # Stay
+	assert_eq(left[0], 0)
+	screen.menu_button.pressed.emit()
+	_dialog_of(screen).buttons[1].pressed.emit()  # Leave
 	assert_eq(left[0], 1)
 	screen.overlay_menu_button.pressed.emit()
 	assert_eq(left[0], 2)
@@ -332,3 +337,11 @@ func test_dice_show_and_tumble_to_the_real_faces() -> void:
 	dice.tumble([1], 0.0, func() -> void: instant[0] = true)
 	assert_true(instant[0])
 	assert_eq(dice.values(), [1])
+
+
+## The question open on a screen, if any.
+func _dialog_of(screen: Node) -> ConfirmDialog:
+	for child: Node in screen.get_children():
+		if child is ConfirmDialog and not child.is_queued_for_deletion():
+			return child
+	return null
