@@ -23,6 +23,7 @@ func test_requested_room_code_is_used() -> void:
 	assert_true(await pump(func() -> bool: return rig.recorder.ready.size() == 1))
 	assert_eq(rig.recorder.ready[0]["address"], "MYROOM")
 	assert_eq(rig.recorder.ready[0]["kind"], "fake_relay")
+	assert_eq(rig.recorder.ready[0]["share_label"], "room code", "named like the real relay's code")
 
 
 func test_taken_room_code_fails_through_host_failed_not_the_return_value() -> void:

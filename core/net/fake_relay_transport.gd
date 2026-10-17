@@ -70,7 +70,7 @@ func poll() -> void:
 			return
 		match event["kind"]:
 			"registered":
-				session_ready.emit({"address": event["code"], "kind": "fake_relay"})
+				session_ready.emit({"address": event["code"], "kind": "fake_relay", "code": event["code"], "share_label": "room code"})
 			"register_failed":
 				_release_and_reset()
 				host_failed.emit(event["reason"])
