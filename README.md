@@ -5,6 +5,8 @@ one player hosts, the others join. First game: **Climb and Slither** (a Snakes a
 
 ## What it looks like
 
+![A host shares a room code, a friend joins, and both take turns on the same board](docs/images/turn.gif)
+
 **Home:** pick a game, then host, join, or play on one computer.
 
 ![Home screen](docs/images/home.png)
@@ -23,7 +25,16 @@ one player hosts, the others join. First game: **Climb and Slither** (a Snakes a
 
 ## Install
 
-There are no ready-made downloads yet, so you run the game with Godot. Everyone who plays needs this part.
+Download the latest build from the [Releases page](https://github.com/thelastone07/openGaming/releases/latest). Everyone who plays needs the same version.
+
+- **Windows:** download `openGaming-<version>-windows.zip`, unzip it, and run `openGaming.exe`.
+  If Windows SmartScreen warns about an unknown app, choose **More info**, then **Run anyway**.
+- **macOS** (Intel or Apple Silicon): download `openGaming-<version>-macos.zip`, unzip it, and move
+  `openGaming.app` to Applications. The app is not signed by Apple, so the first time right-click it
+  and choose **Open**, then **Open** again. If macOS says the app "is damaged", run
+  `xattr -cr /Applications/openGaming.app` in Terminal and try again.
+
+### Run from source instead
 
 1. **Install Godot 4.7** (the standard build, not ".NET") from <https://godotengine.org/download>.
    - **Windows:** unzip it anywhere and run the `.exe`.
@@ -69,11 +80,6 @@ Good to know: the free plan allows about 100,000 relay requests a day, which is 
 ## Docs
 
 `CLAUDE.md` explains how the project is built. `docs/` has the rules, the networking design, the relay, and how to run the tests (`docs/running-tests.md`) and test online play (`docs/manual-network-test.md`).
-
-## Release checklist
-
-- [x] `onlygaming/network/relay_url` in `project.godot` is blank, and no real relay URL was ever
-      committed (players set their own in app settings).
 
 ## Credits
 
