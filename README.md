@@ -1,4 +1,4 @@
-# onlyGaming
+# openGaming
 
 Free, open-source desktop board and card games to play with friends. One app, many games:
 one player hosts, the others join. First game: **Climb and Slither** (a Snakes and Ladders game, 2+ players).
@@ -72,8 +72,8 @@ Good to know: the free plan allows about 100,000 relay requests a day, which is 
 
 ## Release checklist
 
-- [ ] Blank `onlygaming/network/relay_url` in `project.godot` before the repo goes public
-      (it is the one committed default relay URL; players can still set their own in app settings).
+- [x] `onlygaming/network/relay_url` in `project.godot` is blank, and no real relay URL was ever
+      committed (players set their own in app settings).
 
 ## Credits
 

@@ -107,7 +107,7 @@ func _build() -> void:
 	column.alignment = BoxContainer.ALIGNMENT_CENTER
 	_menu_root.add_child(column)
 
-	_title_block = _build_title("onlyGaming")
+	_title_block = _build_title("openGaming")
 	column.add_child(_title_block)
 
 	game_list = VBoxContainer.new()

@@ -1,5 +1,5 @@
 {
-  // onlyGaming relay: a dumb forwarder. One Durable Object per room, SQLite-backed (required on
+  // openGaming relay: a dumb forwarder. One Durable Object per room, SQLite-backed (required on
   // the free plan), WebSocket Hibernation API. No game logic lives here.
   "name": "onlygaming-relay",
   "main": "src/index.ts",

@@ -34,7 +34,7 @@ func _ready() -> void:
 	})
 	lobby.game_started.connect(func(state: Dictionary) -> void: print("[manual] game_started revision=%d players=%d" % [state["revision"], state["slots"].size()]))
 	add_child(lobby)
-	DisplayServer.window_set_title("onlyGaming network test - %s" % str(args.get("name", "(no name)")))
+	DisplayServer.window_set_title("openGaming network test - %s" % str(args.get("name", "(no name)")))
 	print("[manual] app_version=%s godot=%s os=%s" % [AppInfo.app_version(), Engine.get_version_info()["string"], OS.get_name()])
 
 

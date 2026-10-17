@@ -1,4 +1,4 @@
-# onlyGaming
+# openGaming
 
 Free, open-source desktop board and card games for playing with friends.
 One Godot application containing many games. One player hosts, the others

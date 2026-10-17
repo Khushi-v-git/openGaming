@@ -2,7 +2,7 @@
   "name": "onlygaming-relay",
   "version": "1.0.0",
   "private": true,
-  "description": "Dumb WebSocket relay for onlyGaming rooms (Cloudflare Worker + Durable Object)",
+  "description": "Dumb WebSocket relay for openGaming rooms (Cloudflare Worker + Durable Object)",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --local --port 8787",
