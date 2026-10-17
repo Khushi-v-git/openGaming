@@ -7,22 +7,6 @@ one player hosts, the others join. First game: **Climb and Slither** (a Snakes a
 
 ![A host shares a room code, a friend joins, and both take turns on the same board](docs/images/turn.gif)
 
-**Home:** pick a game, then host, join, or play on one computer.
-
-![Home screen](docs/images/home.png)
-
-**Lobby:** the host shares the room code (or address), picks the house rules, and starts when everyone is ready. Guests see the rules read-only.
-
-![Lobby](docs/images/lobby.png)
-
-**Game:** roll on your turn; everyone's board updates together. The host decides what happens if a player drops (wait, continue, or remove them).
-
-![Game in progress](docs/images/game.png)
-
-**Game over:** the host can play again or send everyone back to the lobby.
-
-![Game over](docs/images/game-over.png)
-
 ## Install
 
 Download the latest build from the [Releases page](https://github.com/thelastone07/openGaming/releases/latest). Everyone who plays needs the same version.
