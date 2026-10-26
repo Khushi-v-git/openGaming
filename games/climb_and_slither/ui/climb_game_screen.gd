@@ -125,7 +125,7 @@ func _build() -> void:
 	side_card = PaperCard.new()
 	side_card.back_color = Tokens.DEEP_TEAL
 	side_card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	side_card.custom_minimum_size = Vector2(280, 0)
+	side_card.custom_minimum_size = Vector2(250, 0)
 	_row.add_child(side_card)
 	var column: VBoxContainer = VBoxContainer.new()
 	column.add_theme_constant_override("separation", Tokens.SPACE_S)
